@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
@@ -94,7 +93,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
     );
 
     if (success && mounted) {
-      Navigator.pop(context);
+      Navigator.of(context).popUntil((route) => route.isFirst);
       Notificaciones.mostrar(context, '¡Registro exitoso! Bienvenido.');
     } else if (mounted) {
       Notificaciones.mostrar(context, authProvider.errorMessage ?? 'Error en el registro', error: true);
@@ -112,7 +111,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
         file != null
             ? ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.file(File(file.path), height: 85, width: 85, fit: BoxFit.cover),
+                child: XFileImagePreview(file: file, height: 85, width: 85, fit: BoxFit.cover),
               )
             : Container(
                 height: 85,

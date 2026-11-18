@@ -111,6 +111,34 @@ class _LoginScreenState extends State<LoginScreen> {
                     cargando: authProvider.isLoading,
                     onPressed: _iniciarSesion,
                   ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 54,
+                    child: OutlinedButton.icon(
+                      onPressed: authProvider.isLoading
+                          ? null
+                          : () {
+                              authProvider.iniciarSesionComoInvitado();
+                            },
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: AppTheme.containers,
+                        foregroundColor: AppTheme.primaryButton,
+                        side: const BorderSide(color: AppTheme.primaryButton, width: 1.5),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.person_outline, color: AppTheme.primaryButton),
+                      label: const Text(
+                        'Entrar sin autenticación (Provisional)',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.primaryButton,
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,

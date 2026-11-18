@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -83,24 +82,25 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
 
     setState(() => _guardando = true);
 
+    final isEditing = widget.producto != null;
+    final precio = Validadores.parsearDecimal(_precioController.text) ?? 0.0;
+    int stock = int.tryParse(_stockController.text) ?? (isEditing ? widget.producto!.stockDisponible : 1);
+    int stockBase = int.tryParse(_stockBaseController.text) ?? stock;
+
+    if (_tipoInventario == 'UNICO') {
+      stock = 1;
+      stockBase = 1;
+    } else if (_tipoInventario == 'DIARIO_PERECEDERO') {
+      stockBase = int.tryParse(_stockBaseController.text) ?? stock;
+      stock = isEditing ? stock : stockBase;
+    }
+
     try {
       String fotoUrl = _fotoUrlActual ?? '';
       if (_fotoFile != null) {
         fotoUrl = await _storageService.uploadImage(_fotoFile!, 'productos_assets', 'productos');
       }
 
-      final precio = Validadores.parsearDecimal(_precioController.text) ?? 0.0;
-      int stock = int.tryParse(_stockController.text) ?? 1;
-      int stockBase = int.tryParse(_stockBaseController.text) ?? stock;
-
-      if (_tipoInventario == 'UNICO') {
-        stock = 1;
-        stockBase = 1;
-      } else if (_tipoInventario == 'DIARIO_PERECEDERO') {
-        stockBase = int.tryParse(_stockBaseController.text) ?? stock;
-      }
-
-      final isEditing = widget.producto != null;
       final producto = Producto(
         id: isEditing ? widget.producto!.id : '',
         negocioId: negocio.id,
@@ -109,7 +109,7 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
         fotoUrl: fotoUrl,
         precio: precio,
         tipoInventario: _tipoInventario,
-        stockDisponible: isEditing ? widget.producto!.stockDisponible : stock,
+        stockDisponible: stock,
         stockReservado: isEditing ? widget.producto!.stockReservado : 0,
         stockBaseDiario: stockBase,
         activo: isEditing ? widget.producto!.activo : true,
@@ -162,7 +162,7 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
                       _fotoFile != null
                           ? ClipRRect(
                               borderRadius: BorderRadius.circular(12),
-                              child: Image.file(File(_fotoFile!.path), height: 140, width: 140, fit: BoxFit.cover),
+                              child: XFileImagePreview(file: _fotoFile!, height: 140, width: 140, fit: BoxFit.cover),
                             )
                           : (_fotoUrlActual != null && _fotoUrlActual!.isNotEmpty
                               ? ClipRRect(
@@ -226,8 +226,9 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
                   label: 'Precio (Bs 0.00)',
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   validator: (v) {
-                    if (v == null || v.isEmpty) return 'El precio es requerido';
-                    if (Validadores.parsearDecimal(v) == null) return 'Ingrese un precio válido';
+                    if (v == null || v.trim().isEmpty) return 'El precio es requerido';
+                    final p = Validadores.parsearDecimal(v);
+                    if (p == null || p <= 0) return 'El precio debe ser un número mayor a cero (Bs 0.00)';
                     return null;
                   },
                   prefixIcon: const Icon(Icons.attach_money, color: AppTheme.primaryButton),
@@ -264,8 +265,9 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
                     label: 'Stock Base Diario',
                     keyboardType: TextInputType.number,
                     validator: (v) {
-                      if (v == null || v.isEmpty) return 'El stock base es requerido';
-                      if (int.tryParse(v) == null) return 'Ingrese un número entero válido';
+                      if (v == null || v.trim().isEmpty) return 'El stock base es requerido';
+                      final n = int.tryParse(v);
+                      if (n == null || n <= 0) return 'El stock entero debe ser mayor a cero';
                       return null;
                     },
                     prefixIcon: const Icon(Icons.inventory, color: AppTheme.primaryButton),
@@ -276,8 +278,9 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
                     label: 'Stock Disponible',
                     keyboardType: TextInputType.number,
                     validator: (v) {
-                      if (v == null || v.isEmpty) return 'El stock es requerido';
-                      if (int.tryParse(v) == null) return 'Ingrese un número entero válido';
+                      if (v == null || v.trim().isEmpty) return 'El stock es requerido';
+                      final n = int.tryParse(v);
+                      if (n == null || n <= 0) return 'El stock entero debe ser mayor a cero';
                       return null;
                     },
                     prefixIcon: const Icon(Icons.inventory, color: AppTheme.primaryButton),

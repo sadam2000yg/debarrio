@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -208,13 +207,27 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                   title: const Text('Delivery propio'),
                   value: _deliveryPropio,
                   activeColor: AppTheme.primaryButton,
-                  onChanged: (v) => setState(() => _deliveryPropio = v ?? true),
+                  onChanged: (v) {
+                    final nuevoVal = v ?? true;
+                    if (!nuevoVal && !_deliveryRecojo) {
+                      Notificaciones.mostrar(context, 'Debe mantener al menos una modalidad de entrega activa', error: true);
+                      return;
+                    }
+                    setState(() => _deliveryPropio = nuevoVal);
+                  },
                 ),
                 CheckboxListTile(
                   title: const Text('Recojo en local'),
                   value: _deliveryRecojo,
                   activeColor: AppTheme.primaryButton,
-                  onChanged: (v) => setState(() => _deliveryRecojo = v ?? true),
+                  onChanged: (v) {
+                    final nuevoVal = v ?? true;
+                    if (!nuevoVal && !_deliveryPropio) {
+                      Notificaciones.mostrar(context, 'Debe mantener al menos una modalidad de entrega activa', error: true);
+                      return;
+                    }
+                    setState(() => _deliveryRecojo = nuevoVal);
+                  },
                 ),
                 const SizedBox(height: 24),
                 Text('Fotografías y QR de Pago', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
@@ -227,7 +240,7 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                           _nuevaStoreFile != null
                               ? ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
-                                  child: Image.file(File(_nuevaStoreFile!.path), height: 100, width: 100, fit: BoxFit.cover),
+                                  child: XFileImagePreview(file: _nuevaStoreFile!, height: 100, width: 100, fit: BoxFit.cover),
                                 )
                               : ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
@@ -260,7 +273,7 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                           _nuevaQrFile != null
                               ? ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
-                                  child: Image.file(File(_nuevaQrFile!.path), height: 100, width: 100, fit: BoxFit.cover),
+                                  child: XFileImagePreview(file: _nuevaQrFile!, height: 100, width: 100, fit: BoxFit.cover),
                                 )
                               : ClipRRect(
                                   borderRadius: BorderRadius.circular(8),

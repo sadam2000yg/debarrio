@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../carrito/presentation/carrito_screen.dart';
+import '../../carrito/presentation/mis_compras_screen.dart';
 import '../../profile/presentation/perfil_switch_screen.dart';
 import 'explorar_screen.dart';
 import 'explorar_provider.dart';
@@ -18,16 +20,21 @@ class _VecinoShellState extends State<VecinoShell> {
 
   final List<Widget> _screens = [
     const ExplorarScreen(),
-    const _CarritoPlaceholderScreen(),
-    const _MisComprasPlaceholderScreen(),
+    const CarritoScreen(),
+    const MisComprasScreen(),
     const PerfilSwitchScreen(esPestana: true),
   ];
 
   @override
   void initState() {
     super.initState();
+    final auth = context.read<AuthProvider>();
+    final tab = auth.vecinoTabInicial;
+    if (tab > 0 && tab < _screens.length) {
+      _currentIndex = tab;
+      auth.consumirTabInicial();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final auth = context.read<AuthProvider>();
       context.read<ExplorarProvider>().inicializarUbicacionYBuscar(auth.userProfile);
     });
   }
@@ -67,54 +74,6 @@ class _VecinoShellState extends State<VecinoShell> {
             label: 'Perfil',
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CarritoPlaceholderScreen extends StatelessWidget {
-  const _CarritoPlaceholderScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Mi Carrito', style: TextStyle(color: AppTheme.white)),
-        backgroundColor: AppTheme.primaryButton,
-      ),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32.0),
-          child: Text(
-            'Carrito mononegocio — Próximo Sprint 3',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 18, color: AppTheme.grey, fontWeight: FontWeight.bold),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MisComprasPlaceholderScreen extends StatelessWidget {
-  const _MisComprasPlaceholderScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Mis Compras', style: TextStyle(color: AppTheme.white)),
-        backgroundColor: AppTheme.primaryButton,
-      ),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32.0),
-          child: Text(
-            'Seguimiento de pedidos en vivo — Próximo Sprint 3/4',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 18, color: AppTheme.grey, fontWeight: FontWeight.bold),
-          ),
-        ),
       ),
     );
   }

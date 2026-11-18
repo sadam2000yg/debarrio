@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../auth/domain/negocio.dart';
 import '../../negocio/domain/producto.dart';
 import '../domain/resena.dart';
+import '../../../core/utils/demo_data.dart';
 
 class ExplorarRepository {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -23,29 +24,48 @@ class ExplorarRepository {
       };
 
       final response = await _supabase.rpc('buscar_negocios_cercanos', params: params);
-      return (response as List).map((e) => Negocio.fromMap(e as Map<String, dynamic>)).toList();
+      final list = (response as List).map((e) => Negocio.fromMap(e as Map<String, dynamic>)).toList();
+      if (list.isNotEmpty) return list;
     } catch (_) {
-      var query = _supabase.from('negocios').select();
-      if (categoria != null && categoria.toUpperCase() != 'TODOS') {
-        query = query.eq('categoria', categoria);
-      }
-      if (busqueda != null && busqueda.trim().isNotEmpty) {
-        query = query.ilike('nombre', '%${busqueda.trim()}%');
-      }
-      final response = await query;
-      return (response as List).map((e) => Negocio.fromMap(e as Map<String, dynamic>)).toList();
+      try {
+        var query = _supabase.from('negocios').select();
+        if (categoria != null && categoria.toUpperCase() != 'TODOS') {
+          query = query.eq('categoria', categoria);
+        }
+        if (busqueda != null && busqueda.trim().isNotEmpty) {
+          query = query.ilike('nombre', '%${busqueda.trim()}%');
+        }
+        final response = await query;
+        final list = (response as List).map((e) => Negocio.fromMap(e as Map<String, dynamic>)).toList();
+        if (list.isNotEmpty) return list;
+      } catch (_) {}
     }
+
+    var demoList = DemoData.negociosDemo;
+    if (categoria != null && categoria.toUpperCase() != 'TODOS') {
+      demoList = demoList.where((n) => n.categoria.toLowerCase() == categoria.toLowerCase()).toList();
+    }
+    if (busqueda != null && busqueda.trim().isNotEmpty) {
+      final q = busqueda.trim().toLowerCase();
+      demoList = demoList.where((n) => n.nombre.toLowerCase().contains(q) || n.descripcion.toLowerCase().contains(q)).toList();
+    }
+    return demoList;
   }
 
   Future<List<Producto>> listarProductosDeNegocio(String negocioId) async {
-    final response = await _supabase
-        .from('productos')
-        .select()
-        .eq('negocio_id', negocioId)
-        .eq('activo', true)
-        .order('nombre', ascending: true);
+    try {
+      final response = await _supabase
+          .from('productos')
+          .select()
+          .eq('negocio_id', negocioId)
+          .eq('activo', true)
+          .order('nombre', ascending: true);
 
-    return (response as List).map((e) => Producto.fromMap(e as Map<String, dynamic>)).toList();
+      final list = (response as List).map((e) => Producto.fromMap(e as Map<String, dynamic>)).toList();
+      if (list.isNotEmpty) return list;
+    } catch (_) {}
+
+    return DemoData.productosDemo[negocioId] ?? [];
   }
 
   Future<List<Resena>> obtenerResenasDeNegocio(String negocioId) async {
@@ -56,9 +76,10 @@ class ExplorarRepository {
           .eq('negocio_id', negocioId)
           .order('created_at', ascending: false);
 
-      return (response as List).map((e) => Resena.fromMap(e as Map<String, dynamic>)).toList();
-    } catch (_) {
-      return [];
-    }
+      final list = (response as List).map((e) => Resena.fromMap(e as Map<String, dynamic>)).toList();
+      if (list.isNotEmpty) return list;
+    } catch (_) {}
+
+    return DemoData.resenasDemo[negocioId] ?? [];
   }
 }

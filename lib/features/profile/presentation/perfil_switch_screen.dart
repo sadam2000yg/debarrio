@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme/app_theme.dart';
@@ -68,7 +69,7 @@ class PerfilSwitchScreen extends StatelessWidget {
                     radius: 50,
                     backgroundColor: AppTheme.containers,
                     backgroundImage: profile?.selfieUrl != null && profile!.selfieUrl.isNotEmpty
-                        ? NetworkImage(profile.selfieUrl)
+                        ? CachedNetworkImageProvider(profile.selfieUrl) as ImageProvider
                         : null,
                     child: profile?.selfieUrl == null || profile!.selfieUrl.isEmpty
                         ? const Icon(Icons.person, size: 50, color: AppTheme.primaryButton)
@@ -95,6 +96,8 @@ class PerfilSwitchScreen extends StatelessWidget {
                   children: [
                     const Text('Información Verificada', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primaryButton)),
                     const Divider(),
+                    _infoRow(Icons.person, 'Nombre', profile?.nombre ?? '-'),
+                    _infoRow(Icons.email, 'Email', profile?.email ?? '-'),
                     _infoRow(Icons.badge, 'C.I.', profile?.ci ?? '-'),
                     _infoRow(Icons.phone, 'Teléfono', profile?.telefono ?? '-'),
                     _infoRow(Icons.verified_user, 'Rol Activo', authProvider.activeRole),
@@ -107,6 +110,8 @@ class PerfilSwitchScreen extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: 24),
+            _buildKycGrid(profile),
             const SizedBox(height: 24),
             if (isEmprendedor) ...[
               if (negocio != null) ...[
@@ -174,6 +179,85 @@ class PerfilSwitchScreen extends StatelessWidget {
         ],
       ),
       body: content,
+    );
+  }
+
+  Widget _buildKycGrid(dynamic profile) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Documentos e Imágenes KYC',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primaryButton),
+            ),
+            const Divider(),
+            const SizedBox(height: 8),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.1,
+              children: [
+                _buildKycImageCard('Selfie', profile?.selfieUrl),
+                _buildKycImageCard('Fachada', profile?.facadeUrl),
+                _buildKycImageCard('C.I. Anverso', profile?.ciAnversoUrl),
+                _buildKycImageCard('C.I. Reverso', profile?.ciReversoUrl),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKycImageCard(String title, String? url) {
+    final bool hasUrl = url != null && url.trim().isNotEmpty;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.containers,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.grey.withValues(alpha: 0.2)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Expanded(
+            child: hasUrl
+                ? CachedNetworkImage(
+                    imageUrl: url,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    placeholder: (context, url) => const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryButton),
+                    ),
+                    errorWidget: (context, url, error) => const Center(
+                      child: Icon(Icons.broken_image, color: AppTheme.grey, size: 32),
+                    ),
+                  )
+                : const Center(
+                    child: Icon(Icons.image_not_supported, color: AppTheme.grey, size: 32),
+                  ),
+          ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            color: Colors.black54,
+            child: Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

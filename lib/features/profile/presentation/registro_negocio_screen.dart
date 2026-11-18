@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
@@ -153,13 +152,27 @@ class _RegistroNegocioScreenState extends State<RegistroNegocioScreen> {
                   title: const Text('Delivery propio'),
                   value: _deliveryPropio,
                   activeColor: AppTheme.primaryButton,
-                  onChanged: (v) => setState(() => _deliveryPropio = v ?? true),
+                  onChanged: (v) {
+                    final nuevoVal = v ?? true;
+                    if (!nuevoVal && !_deliveryRecojo) {
+                      Notificaciones.mostrar(context, 'Debe mantener al menos una modalidad de entrega activa', error: true);
+                      return;
+                    }
+                    setState(() => _deliveryPropio = nuevoVal);
+                  },
                 ),
                 CheckboxListTile(
                   title: const Text('Recojo en local'),
                   value: _deliveryRecojo,
                   activeColor: AppTheme.primaryButton,
-                  onChanged: (v) => setState(() => _deliveryRecojo = v ?? true),
+                  onChanged: (v) {
+                    final nuevoVal = v ?? true;
+                    if (!nuevoVal && !_deliveryPropio) {
+                      Notificaciones.mostrar(context, 'Debe mantener al menos una modalidad de entrega activa', error: true);
+                      return;
+                    }
+                    setState(() => _deliveryRecojo = nuevoVal);
+                  },
                 ),
                 const SizedBox(height: 24),
                 Text('Fotografías del Negocio y QR', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
@@ -172,7 +185,7 @@ class _RegistroNegocioScreenState extends State<RegistroNegocioScreen> {
                           _storePhotoFile != null
                               ? ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
-                                  child: Image.file(File(_storePhotoFile!.path), height: 100, width: 100, fit: BoxFit.cover),
+                                  child: XFileImagePreview(file: _storePhotoFile!, height: 100, width: 100, fit: BoxFit.cover),
                                 )
                               : Container(
                                   height: 100,
@@ -196,7 +209,7 @@ class _RegistroNegocioScreenState extends State<RegistroNegocioScreen> {
                           _qrPhotoFile != null
                               ? ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
-                                  child: Image.file(File(_qrPhotoFile!.path), height: 100, width: 100, fit: BoxFit.cover),
+                                  child: XFileImagePreview(file: _qrPhotoFile!, height: 100, width: 100, fit: BoxFit.cover),
                                 )
                               : Container(
                                   height: 100,

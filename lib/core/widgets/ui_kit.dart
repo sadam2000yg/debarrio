@@ -1,6 +1,9 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/location_service.dart';
 import '../theme/app_theme.dart';
@@ -262,5 +265,45 @@ class Notificaciones {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
+  }
+}
+
+class XFileImagePreview extends StatelessWidget {
+  final XFile file;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+
+  const XFileImagePreview({
+    super.key,
+    required this.file,
+    this.width,
+    this.height,
+    this.fit = BoxFit.cover,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Image.network(
+        file.path,
+        width: width,
+        height: height,
+        fit: fit,
+        errorBuilder: (context, error, stackTrace) => Container(
+          width: width,
+          height: height,
+          color: AppTheme.containers,
+          child: const Icon(Icons.broken_image, color: AppTheme.primaryButton),
+        ),
+      );
+    } else {
+      return Image.file(
+        File(file.path),
+        width: width,
+        height: height,
+        fit: fit,
+      );
+    }
   }
 }

@@ -15,11 +15,12 @@ void main() async {
   await Supabase.initialize(
     url: const String.fromEnvironment(
       'SUPABASE_URL',
-      defaultValue: 'https://your-supabase-url.supabase.co',
+      defaultValue: 'https://yazcljvhigeojtjletfb.supabase.co',
     ),
     publishableKey: const String.fromEnvironment(
       'SUPABASE_ANON_KEY',
-      defaultValue: 'your-anon-key',
+      defaultValue:
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlhemNsanZoaWdlb2p0amxldGZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUwMTA0NjAsImV4cCI6MjExMDU4NjQ2MH0.m7t3GsSsB2PYh42zgSYPzvsg_1e5igy3U8Din_i_M9I',
     ),
   );
 

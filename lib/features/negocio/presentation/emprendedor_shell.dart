@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/presentation/auth_provider.dart';
+import '../../comanda/presentation/comanda_screen.dart';
 import '../../profile/presentation/perfil_switch_screen.dart';
 import 'catalogo_provider.dart';
 import 'mi_catalogo_screen.dart';
@@ -20,7 +21,7 @@ class _EmprendedorShellState extends State<EmprendedorShell> {
   final List<Widget> _screens = [
     const MiPuestoScreen(),
     const MiCatalogoScreen(),
-    const _ComandaPlaceholderScreen(),
+    const ComandaScreen(),
     const PerfilSwitchScreen(esPestana: true),
   ];
 
@@ -70,30 +71,6 @@ class _EmprendedorShellState extends State<EmprendedorShell> {
             label: 'Perfil',
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ComandaPlaceholderScreen extends StatelessWidget {
-  const _ComandaPlaceholderScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Comanda de Pedidos', style: TextStyle(color: AppTheme.white)),
-        backgroundColor: AppTheme.primaryButton,
-      ),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32.0),
-          child: Text(
-            'Comanda de pedidos en tiempo real — Próximo Sprint 3',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 18, color: AppTheme.grey, fontWeight: FontWeight.bold),
-          ),
-        ),
       ),
     );
   }

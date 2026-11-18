@@ -85,6 +85,9 @@ class Negocio {
     } else if (map['delivery_options'] is String) {
       delivery = [map['delivery_options'].toString()];
     }
+    if (delivery.isEmpty) {
+      delivery = ['DELIVERY_PROPIO', 'RECOJO_LOCAL'];
+    }
 
     double? dist;
     if (map['distancia_metros'] != null) {
