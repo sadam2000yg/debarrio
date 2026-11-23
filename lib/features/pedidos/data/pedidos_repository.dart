@@ -135,6 +135,19 @@ class PedidosRepository {
     }
   }
 
+  Future<void> abrirDisputa({required String pedidoId, required String motivo}) async {
+    try {
+      await _supabase.from('pedidos').update({
+        'estado': 'EN_DISPUTA',
+        'alerta_pago': 'Disputa/Devolución: $motivo',
+      }).eq('id', pedidoId);
+    } on PostgrestException catch (e) {
+      throw e.message;
+    } catch (e) {
+      throw e.toString();
+    }
+  }
+
   Future<void> crearResenaVerificada({
     required String pedidoId,
     required int calificacion,
