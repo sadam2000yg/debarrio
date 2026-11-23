@@ -160,7 +160,7 @@ class _MisComprasScreenState extends State<MisComprasScreen> {
         colorTxt = Colors.green.shade900;
         break;
       case 'CANCELADO_POR_TIEMPO':
-        label = 'Cancelado por tiempo (3 min)';
+        label = 'Cancelado por tiempo (1 min)';
         colorBg = Colors.red.shade100;
         colorTxt = Colors.red.shade900;
         break;

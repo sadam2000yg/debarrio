@@ -92,7 +92,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('No se pudo procesar la reserva'),
+          title: const Text('Reserva no disponible / Producto ocupado'),
           content: Text(errorMsg!),
           actions: [
             ElevatedButton(
@@ -301,7 +301,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'Al confirmar, tu stock quedará reservado por 3 minutos para realizar el pago por QR Simple.',
+                              'Al confirmar, tu stock quedará reservado por 1 minuto para realizar el pago por QR Simple.',
                               style: TextStyle(fontWeight: FontWeight.w500, color: Colors.brown, fontSize: 13),
                             ),
                           ),
@@ -312,7 +312,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     SizedBox(
                       height: 54,
                       child: BotonPrincipal(
-                        texto: 'Confirmar y reservar stock (3 min)',
+                        texto: 'Confirmar y reservar stock (1 min)',
                         cargando: _procesando,
                         onPressed: _procesando ? null : () => _confirmarYReservar(carrito),
                       ),

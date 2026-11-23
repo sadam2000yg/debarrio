@@ -186,7 +186,7 @@ class CarritoProvider extends ChangeNotifier {
         if (stockDisponible < item.cantidad) {
           _validandoStock = false;
           notifyListeners();
-          return 'Stock insuficiente para "${item.producto.nombre}" (Disponible: $stockDisponible)';
+          return 'El producto "${item.producto.nombre}" ha sido reservado por otro vecino o el stock es insuficiente (Disponible: $stockDisponible). Si no completa su compra en 1 minuto, volverá a estar disponible.';
         }
       }
 

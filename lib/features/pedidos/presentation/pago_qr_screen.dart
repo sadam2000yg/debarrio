@@ -184,7 +184,7 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
   @override
   Widget build(BuildContext context) {
     final bool esExpirado = _pedidoActual.estado == 'CANCELADO_POR_TIEMPO';
-    final bool esUrgente = _restante.inSeconds < 45 && !esExpirado;
+    final bool esUrgente = _restante.inSeconds < 20 && !esExpirado;
     final String minutos = _restante.inMinutes.remainder(60).toString().padLeft(2, '0');
     final String segundos = _restante.inSeconds.remainder(60).toString().padLeft(2, '0');
     final String modalidad = _pedidoActual.modalidadEntrega == 'DELIVERY' ? 'Envío a domicilio' : 'Retiro en puerta';
@@ -236,7 +236,7 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                             ),
                             const SizedBox(height: 2),
                             const Text(
-                              'Tiempo de reserva de stock',
+                              'Tiempo de reserva de stock (1 min)',
                               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppTheme.textPrimary),
                             ),
                           ],
@@ -342,7 +342,7 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Text(
-                    'El tiempo de 3 minutos expiró y tu stock fue liberado',
+                    'El tiempo de 1 minuto expiró y tu stock fue liberado',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
                   ),

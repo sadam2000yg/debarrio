@@ -33,8 +33,16 @@ class PedidosRepository {
 
       return await obtenerPedidoPorId(pedidoId);
     } on PostgrestException catch (e) {
+      final msg = e.message.toLowerCase();
+      if (msg.contains('stock') || msg.contains('insuficiente') || msg.contains('reservad') || msg.contains('insufficient') || msg.contains('bloquead')) {
+        throw 'Este producto ha sido reservado temporalmente por otro vecino. Si no completa su pago en 1 minuto, volverá a estar disponible.';
+      }
       throw e.message;
     } catch (e) {
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('stock') || msg.contains('insuficiente') || msg.contains('reservad') || msg.contains('insufficient')) {
+        throw 'Este producto ha sido reservado temporalmente por otro vecino. Si no completa su pago en 1 minuto, volverá a estar disponible.';
+      }
       throw e.toString();
     }
   }
