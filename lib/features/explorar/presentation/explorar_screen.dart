@@ -194,13 +194,13 @@ class ExplorarScreen extends StatelessWidget {
                                                     ),
                                                   ],
                                                 ),
-                                              if (negocio.calificacionPromedio != null)
+                                              if (negocio.calificacionPromedio > 0)
                                                 Row(
                                                   children: [
                                                     const Icon(Icons.star, size: 14, color: Colors.amber),
                                                     const SizedBox(width: 4),
                                                     Text(
-                                                      negocio.calificacionPromedio!.toStringAsFixed(1),
+                                                      negocio.calificacionPromedio.toStringAsFixed(1),
                                                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                                                     ),
                                                   ],

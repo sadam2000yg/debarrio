@@ -75,13 +75,18 @@ class _RegistroNegocioScreenState extends State<RegistroNegocioScreen> {
       return;
     }
 
-    final shippingDouble = Validadores.parsearDecimal(_shippingCostController.text) ?? 0.0;
-    final shippingCents = (shippingDouble * 100).round();
+    int shippingCents = 0;
+    if (_deliveryPropio && _shippingCostController.text.trim().isNotEmpty) {
+      final shippingDouble = Validadores.parsearDecimal(_shippingCostController.text.trim()) ?? 0.0;
+      if (shippingDouble > 0) {
+        shippingCents = (shippingDouble * 100).round();
+      }
+    }
 
     final authProvider = context.read<AuthProvider>();
     final success = await authProvider.registrarNegocio(
-      nombre: _nombreController.text,
-      descripcion: _descripcionController.text,
+      nombre: _nombreController.text.trim(),
+      descripcion: _descripcionController.text.trim(),
       storePhoto: _storePhotoFile!,
       qrPhoto: _qrPhotoFile!,
       deliveryOptions: deliveryOptions,
@@ -134,18 +139,6 @@ class _RegistroNegocioScreenState extends State<RegistroNegocioScreen> {
                   validator: (v) => Validadores.validarTextoRequerido(v, 'Descripción'),
                   prefixIcon: const Icon(Icons.description, color: AppTheme.primaryButton),
                 ),
-                const SizedBox(height: 16),
-                CampoTexto(
-                  controller: _shippingCostController,
-                  label: 'Costo de envío (ej. 3.50 o 3,50)',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  validator: (v) {
-                    if (v == null || v.isEmpty) return 'El costo de envío es requerido';
-                    if (Validadores.parsearDecimal(v) == null) return 'Ingrese un número válido';
-                    return null;
-                  },
-                  prefixIcon: const Icon(Icons.attach_money, color: AppTheme.primaryButton),
-                ),
                 const SizedBox(height: 24),
                 Text('Opciones de Entrega', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                 CheckboxListTile(
@@ -158,9 +151,32 @@ class _RegistroNegocioScreenState extends State<RegistroNegocioScreen> {
                       Notificaciones.mostrar(context, 'Debe mantener al menos una modalidad de entrega activa', error: true);
                       return;
                     }
-                    setState(() => _deliveryPropio = nuevoVal);
+                    setState(() {
+                      _deliveryPropio = nuevoVal;
+                      if (!nuevoVal) {
+                        _shippingCostController.clear();
+                      }
+                    });
                   },
                 ),
+                if (_deliveryPropio) ...[
+                  const SizedBox(height: 8),
+                  CampoTexto(
+                    controller: _shippingCostController,
+                    label: 'Costo de envío (ej. 3.50 o 3,50) (Opcional)',
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    validator: (v) {
+                      if (!_deliveryPropio) return null;
+                      if (v == null || v.trim().isEmpty) return null;
+                      final val = Validadores.parsearDecimal(v.trim());
+                      if (val == null || val < 0) {
+                        return 'Ingrese un monto válido (≥ 0)';
+                      }
+                      return null;
+                    },
+                    prefixIcon: const Icon(Icons.attach_money, color: AppTheme.primaryButton),
+                  ),
+                ],
                 CheckboxListTile(
                   title: const Text('Recojo en local'),
                   value: _deliveryRecojo,

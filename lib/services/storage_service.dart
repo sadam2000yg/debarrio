@@ -51,4 +51,12 @@ class StorageService {
     final publicUrl = _supabase.storage.from(bucket).getPublicUrl(fileName);
     return publicUrl;
   }
+
+  Future<List<String>> uploadImages(List<XFile> files, String bucket, String pathPrefix) async {
+    if (files.isEmpty) return [];
+    final archivosLimitados = files.take(5).toList();
+    return Future.wait(
+      archivosLimitados.map((file) => uploadImage(file, bucket, pathPrefix)),
+    );
+  }
 }

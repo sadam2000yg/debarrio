@@ -30,7 +30,7 @@ class AuthProvider extends ChangeNotifier {
   void consumirTabInicial() {
     _vecinoTabInicial = 0;
   }
-  bool get isAuthenticated => (_supabase.auth.currentUser != null && _userProfile != null) || (_userProfile?.id == 'invitado-test-id');
+  bool get isAuthenticated => _supabase.auth.currentUser != null && _userProfile != null;
 
   void clearError() {
     _errorMessage = null;
@@ -41,24 +41,8 @@ class AuthProvider extends ChangeNotifier {
     _needsBusinessRegistration = false;
   }
 
-  void iniciarSesionComoInvitado() {
-    _userProfile = UserProfile(
-      id: 'invitado-test-id',
-      email: 'invitado@dbarrio.app',
-      nombre: 'Vecino Invitado (Provisional)',
-      ci: '0000000',
-      telefono: '70000000',
-      selfieUrl: '',
-      facadeUrl: '',
-      ciAnversoUrl: '',
-      ciReversoUrl: '',
-      lat: -16.5000,
-      lng: -68.1500,
-      activeRole: 'VECINO',
-    );
-    _activeRole = 'VECINO';
-    _negocio = null;
-    _errorMessage = null;
+  void actualizarNegocio(Negocio negocioActualizado) {
+    _negocio = negocioActualizado;
     notifyListeners();
   }
 
@@ -252,15 +236,8 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       final userId = _userProfile!.id;
-      String storeUrl = '';
-      String qrUrl = '';
-      try {
-        storeUrl = await _storageService.uploadImage(storePhoto, 'negocios_assets', userId, customFileName: '$userId/store.jpg');
-        qrUrl = await _storageService.uploadImage(qrPhoto, 'negocios_assets', userId, customFileName: '$userId/qr.jpg');
-      } catch (_) {
-        storeUrl = 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5';
-        qrUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe';
-      }
+      final storeUrl = await _storageService.uploadImage(storePhoto, 'negocios_assets', userId, customFileName: '$userId/store.jpg');
+      final qrUrl = await _storageService.uploadImage(qrPhoto, 'negocios_assets', userId, customFileName: '$userId/qr.jpg');
 
       final negocioMap = <String, dynamic>{
         'owner_id': userId,
@@ -278,32 +255,14 @@ class AuthProvider extends ChangeNotifier {
         final res = await _supabase.from('negocios').insert(negocioMap).select().single();
         _negocio = Negocio.fromMap(res);
       } catch (_) {
-        // Fallback 1: Try without delivery_options & shipping_cost if columns are missing in Supabase schema
-        try {
-          final fallbackMap = Map<String, dynamic>.from(negocioMap)
-            ..remove('delivery_options')
-            ..remove('shipping_cost');
-          final res = await _supabase.from('negocios').insert(fallbackMap).select().single();
-          _negocio = Negocio.fromMap(res).copyWith(
-            deliveryOptions: deliveryOptions,
-            shippingCost: shippingCost,
-          );
-        } catch (_) {
-          // Fallback 2: Create local negocio object for smooth demo/offline execution
-          _negocio = Negocio(
-            id: 'negocio-${DateTime.now().millisecondsSinceEpoch}',
-            ownerId: userId,
-            nombre: nombre.trim(),
-            descripcion: descripcion.trim(),
-            lat: lat,
-            lng: lng,
-            storePhotoUrl: storeUrl,
-            qrPhotoUrl: qrUrl,
-            deliveryOptions: deliveryOptions,
-            shippingCost: shippingCost,
-            abierto: true,
-          );
-        }
+        final fallbackMap = Map<String, dynamic>.from(negocioMap)
+          ..remove('delivery_options')
+          ..remove('shipping_cost');
+        final res = await _supabase.from('negocios').insert(fallbackMap).select().single();
+        _negocio = Negocio.fromMap(res).copyWith(
+          deliveryOptions: deliveryOptions,
+          shippingCost: shippingCost,
+        );
       }
 
       _activeRole = 'EMPRENDEDOR';

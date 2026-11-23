@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -5,6 +6,10 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/validadores.dart';
 import '../../../core/widgets/ui_kit.dart';
 import '../../../services/storage_service.dart';
+import '../../auth/domain/negocio.dart';
+import '../../auth/presentation/auth_provider.dart';
+import '../../pedidos/data/pedidos_repository.dart';
+import '../../pedidos/domain/resena.dart';
 import 'catalogo_provider.dart';
 
 class MiPuestoScreen extends StatefulWidget {
@@ -28,20 +33,67 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
   final ImagePicker _picker = ImagePicker();
   bool _guardando = false;
 
+  bool _inicializado = false;
+  Negocio? _lastNegocio;
+  List<Resena> _resenasPuesto = [];
+  bool _cargandoResenas = false;
+
   @override
   void initState() {
     super.initState();
-    final catalogo = context.read<CatalogoProvider>();
-    final negocio = catalogo.negocioActual;
-    _nombreController = TextEditingController(text: negocio?.nombre ?? '');
-    _descripcionController = TextEditingController(text: negocio?.descripcion ?? '');
-    _shippingCostController = TextEditingController(
-      text: negocio != null ? (negocio.shippingCost / 100).toStringAsFixed(2) : '0.00',
-    );
-    if (negocio != null) {
-      _deliveryPropio = negocio.deliveryOptions.contains('DELIVERY_PROPIO');
-      _deliveryRecojo = negocio.deliveryOptions.contains('RECOJO_LOCAL');
+    _nombreController = TextEditingController();
+    _descripcionController = TextEditingController();
+    _shippingCostController = TextEditingController();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final catalogo = context.watch<CatalogoProvider>();
+    final auth = context.watch<AuthProvider>();
+    final negocio = catalogo.negocioActual ?? auth.negocio;
+
+    if (negocio != null && (!_inicializado || _lastNegocio?.id != negocio.id)) {
+      _precargarDatos(negocio);
+      _cargarResenasPuesto(negocio.id);
+      _lastNegocio = negocio;
+      _inicializado = true;
     }
+  }
+
+  Future<void> _cargarResenasPuesto(String negocioId) async {
+    if (_cargandoResenas) return;
+    setState(() => _cargandoResenas = true);
+    try {
+      final list = await PedidosRepository().listarResenasNegocio(negocioId);
+      if (mounted) {
+        setState(() {
+          _resenasPuesto = list;
+          _cargandoResenas = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _cargandoResenas = false);
+      }
+    }
+  }
+
+  void _precargarDatos(Negocio negocio) {
+    _nombreController.text = negocio.nombre;
+    _descripcionController.text = negocio.descripcion;
+
+    if (negocio.shippingCost > 0) {
+      final double bs = negocio.shippingCost / 100.0;
+      _shippingCostController.text = (bs == bs.roundToDouble())
+          ? bs.toInt().toString()
+          : bs.toStringAsFixed(2);
+    } else {
+      _shippingCostController.text = '';
+    }
+
+    _deliveryPropio = negocio.deliveryOptions.contains('DELIVERY_PROPIO');
+    _deliveryRecojo = negocio.deliveryOptions.contains('RECOJO_LOCAL');
   }
 
   @override
@@ -82,7 +134,8 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
     }
 
     final catalogo = context.read<CatalogoProvider>();
-    final negocio = catalogo.negocioActual;
+    final authProvider = context.read<AuthProvider>();
+    final negocio = catalogo.negocioActual ?? authProvider.negocio;
     if (negocio == null) return;
 
     setState(() => _guardando = true);
@@ -98,12 +151,18 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
         qrUrl = await _storageService.uploadImage(_nuevaQrFile!, 'negocios_assets', 'qrs');
       }
 
-      final shippingDouble = Validadores.parsearDecimal(_shippingCostController.text) ?? 0.0;
-      final shippingCents = (shippingDouble * 100).round();
+      int shippingCents = 0;
+      if (_deliveryPropio && _shippingCostController.text.trim().isNotEmpty) {
+        final shippingDouble = Validadores.parsearDecimal(_shippingCostController.text.trim()) ?? 0.0;
+        if (shippingDouble > 0) {
+          shippingCents = (shippingDouble * 100).round();
+        }
+      }
 
       final success = await catalogo.actualizarConfiguracionPuesto(
-        nombre: _nombreController.text,
-        descripcion: _descripcionController.text,
+        negocioId: negocio.id,
+        nombre: _nombreController.text.trim(),
+        descripcion: _descripcionController.text.trim(),
         deliveryOptions: deliveryOptions,
         shippingCost: shippingCents,
         qrPhotoUrl: qrUrl,
@@ -112,10 +171,23 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
 
       if (mounted) {
         if (success) {
+          final negocioActualizado = (catalogo.negocioActual ?? negocio).copyWith(
+            nombre: _nombreController.text.trim(),
+            descripcion: _descripcionController.text.trim(),
+            deliveryOptions: deliveryOptions,
+            shippingCost: shippingCents,
+            qrPhotoUrl: qrUrl,
+            storePhotoUrl: storeUrl,
+          );
+
+          catalogo.setNegocioActual(negocioActualizado);
+          authProvider.actualizarNegocio(negocioActualizado);
+
           Notificaciones.mostrar(context, '¡Puesto actualizado con éxito!');
           setState(() {
             _nuevaStoreFile = null;
             _nuevaQrFile = null;
+            _lastNegocio = negocioActualizado;
           });
         } else {
           Notificaciones.mostrar(context, catalogo.error ?? 'Error al actualizar puesto', error: true);
@@ -131,11 +203,20 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
   @override
   Widget build(BuildContext context) {
     final catalogo = context.watch<CatalogoProvider>();
-    final negocio = catalogo.negocioActual;
+    final auth = context.watch<AuthProvider>();
+    final negocio = catalogo.negocioActual ?? auth.negocio;
 
     if (negocio == null) {
-      return const Scaffold(
-        body: Center(child: Text('No hay información del negocio registrada.')),
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Mi Puesto', style: TextStyle(color: AppTheme.white)),
+          backgroundColor: AppTheme.primaryButton,
+        ),
+        body: Center(
+          child: catalogo.cargando || auth.isLoading
+              ? const CircularProgressIndicator()
+              : const Text('No hay información del negocio registrada.'),
+        ),
       );
     }
 
@@ -166,7 +247,9 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                     onChanged: (val) async {
                       final success = await catalogo.actualizarEstadoOperativo(val);
                       if (!mounted) return;
-                      if (!success) {
+                      if (success && catalogo.negocioActual != null) {
+                        auth.actualizarNegocio(catalogo.negocioActual!);
+                      } else if (!success) {
                         // ignore: use_build_context_synchronously
                         Notificaciones.mostrar(context, catalogo.error ?? 'Error al actualizar estado', error: true);
                       }
@@ -189,18 +272,6 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                   validator: (v) => Validadores.validarTextoRequerido(v, 'Descripción'),
                   prefixIcon: const Icon(Icons.description, color: AppTheme.primaryButton),
                 ),
-                const SizedBox(height: 16),
-                CampoTexto(
-                  controller: _shippingCostController,
-                  label: 'Costo de envío (Bs)',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  validator: (v) {
-                    if (v == null || v.isEmpty) return 'El costo de envío es requerido';
-                    if (Validadores.parsearDecimal(v) == null) return 'Ingrese un número válido';
-                    return null;
-                  },
-                  prefixIcon: const Icon(Icons.attach_money, color: AppTheme.primaryButton),
-                ),
                 const SizedBox(height: 24),
                 Text('Opciones de Entrega', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                 CheckboxListTile(
@@ -213,9 +284,32 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                       Notificaciones.mostrar(context, 'Debe mantener al menos una modalidad de entrega activa', error: true);
                       return;
                     }
-                    setState(() => _deliveryPropio = nuevoVal);
+                    setState(() {
+                      _deliveryPropio = nuevoVal;
+                      if (!nuevoVal) {
+                        _shippingCostController.clear();
+                      }
+                    });
                   },
                 ),
+                if (_deliveryPropio) ...[
+                  const SizedBox(height: 8),
+                  CampoTexto(
+                    controller: _shippingCostController,
+                    label: 'Costo de envío (Bs) (Opcional)',
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    validator: (v) {
+                      if (!_deliveryPropio) return null;
+                      if (v == null || v.trim().isEmpty) return null;
+                      final val = Validadores.parsearDecimal(v.trim());
+                      if (val == null || val < 0) {
+                        return 'Ingrese un monto válido (≥ 0)';
+                      }
+                      return null;
+                    },
+                    prefixIcon: const Icon(Icons.attach_money, color: AppTheme.primaryButton),
+                  ),
+                ],
                 CheckboxListTile(
                   title: const Text('Recojo en local'),
                   value: _deliveryRecojo,
@@ -242,21 +336,31 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                   child: XFileImagePreview(file: _nuevaStoreFile!, height: 100, width: 100, fit: BoxFit.cover),
                                 )
-                              : ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(
-                                    negocio.storePhotoUrl,
-                                    height: 100,
-                                    width: 100,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, _, _) => Container(
+                              : (negocio.storePhotoUrl.isNotEmpty
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(
+                                        negocio.storePhotoUrl,
+                                        height: 100,
+                                        width: 100,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => Container(
+                                          height: 100,
+                                          width: 100,
+                                          color: AppTheme.containers,
+                                          child: const Icon(Icons.storefront, color: AppTheme.primaryButton),
+                                        ),
+                                      ),
+                                    )
+                                  : Container(
                                       height: 100,
                                       width: 100,
-                                      color: AppTheme.containers,
-                                      child: const Icon(Icons.storefront, color: AppTheme.primaryButton),
-                                    ),
-                                  ),
-                                ),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.containers,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Icon(Icons.storefront, color: AppTheme.primaryButton, size: 40),
+                                    )),
                           const SizedBox(height: 8),
                           OutlinedButton.icon(
                             onPressed: () => _pickImage(true),
@@ -275,21 +379,31 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                   child: XFileImagePreview(file: _nuevaQrFile!, height: 100, width: 100, fit: BoxFit.cover),
                                 )
-                              : ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(
-                                    negocio.qrPhotoUrl,
-                                    height: 100,
-                                    width: 100,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, _, _) => Container(
+                              : (negocio.qrPhotoUrl.isNotEmpty
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(
+                                        negocio.qrPhotoUrl,
+                                        height: 100,
+                                        width: 100,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => Container(
+                                          height: 100,
+                                          width: 100,
+                                          color: AppTheme.containers,
+                                          child: const Icon(Icons.qr_code, color: AppTheme.primaryButton),
+                                        ),
+                                      ),
+                                    )
+                                  : Container(
                                       height: 100,
                                       width: 100,
-                                      color: AppTheme.containers,
-                                      child: const Icon(Icons.qr_code, color: AppTheme.primaryButton),
-                                    ),
-                                  ),
-                                ),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.containers,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Icon(Icons.qr_code, color: AppTheme.primaryButton, size: 40),
+                                    )),
                           const SizedBox(height: 8),
                           OutlinedButton.icon(
                             onPressed: () => _pickImage(false),
@@ -307,6 +421,103 @@ class _MiPuestoScreenState extends State<MiPuestoScreen> {
                   cargando: _guardando || catalogo.cargando,
                   onPressed: _guardarCambios,
                 ),
+                const SizedBox(height: 32),
+                const Divider(),
+                const SizedBox(height: 16),
+                Text('Reputación y Reseñas de Vecinos', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: AppTheme.primaryButton)),
+                const SizedBox(height: 12),
+                Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.star, color: Colors.amber, size: 40),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Promedio: ${negocio.calificacionPromedio.toStringAsFixed(1)} / 5.0',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${negocio.totalResenas} ${negocio.totalResenas == 1 ? "opinión recibida" : "opiniones recibidas"}',
+                              style: const TextStyle(color: AppTheme.grey, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _cargandoResenas
+                    ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryButton))
+                    : _resenasPuesto.isEmpty
+                        ? const Text('Aún no tienes opiniones registradas de tus vecinos.', style: TextStyle(color: AppTheme.grey))
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _resenasPuesto.length,
+                            itemBuilder: (context, index) {
+                              final res = _resenasPuesto[index];
+                              final String fecha = res.createdAt != null
+                                  ? '${res.createdAt!.day.toString().padLeft(2, '0')}/${res.createdAt!.month.toString().padLeft(2, '0')}/${res.createdAt!.year}'
+                                  : '';
+
+                              return Card(
+                                elevation: 1,
+                                margin: const EdgeInsets.only(bottom: 8),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12.0),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              CircleAvatar(
+                                                radius: 14,
+                                                backgroundColor: AppTheme.containers,
+                                                backgroundImage: res.compradorSelfieUrl != null && res.compradorSelfieUrl!.isNotEmpty
+                                                    ? CachedNetworkImageProvider(res.compradorSelfieUrl!) as ImageProvider
+                                                    : null,
+                                                child: res.compradorSelfieUrl == null || res.compradorSelfieUrl!.isEmpty
+                                                    ? const Icon(Icons.person, size: 14, color: AppTheme.primaryButton)
+                                                    : null,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(res.compradorNombre ?? 'Vecino verificado', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                            ],
+                                          ),
+                                          Row(
+                                            children: List.generate(
+                                              res.calificacion,
+                                              (_) => const Icon(Icons.star, size: 14, color: Colors.amber),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      if (fecha.isNotEmpty) ...[
+                                        const SizedBox(height: 4),
+                                        Text(fecha, style: const TextStyle(color: AppTheme.grey, fontSize: 11)),
+                                      ],
+                                      if (res.comentario.isNotEmpty) ...[
+                                        const SizedBox(height: 6),
+                                        Text(res.comentario, style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
               ],
             ),
           ),

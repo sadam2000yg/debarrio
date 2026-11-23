@@ -101,4 +101,13 @@ class ExplorarProvider extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  void limpiar() {
+    _negociosCercanos = [];
+    _categoriaSeleccionada = 'TODOS';
+    _busquedaTexto = '';
+    _error = null;
+    _cargando = false;
+    notifyListeners();
+  }
 }

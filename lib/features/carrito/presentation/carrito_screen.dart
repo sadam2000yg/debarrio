@@ -1,22 +1,17 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/ui_kit.dart';
+import '../../negocio/domain/producto.dart';
 
-class CartItemMock {
-  final String id;
-  final String nombre;
-  final double precio;
+class CarritoItem {
+  final Producto producto;
   int cantidad;
-  final String fotoUrl;
 
-  CartItemMock({
-    required this.id,
-    required this.nombre,
-    required this.precio,
-    required this.cantidad,
-    required this.fotoUrl,
-  });
+  CarritoItem({required this.producto, this.cantidad = 1});
+
+  double get subtotal => producto.precio * cantidad;
 }
 
 class CarritoScreen extends StatefulWidget {
@@ -27,34 +22,12 @@ class CarritoScreen extends StatefulWidget {
 }
 
 class _CarritoScreenState extends State<CarritoScreen> {
-  final List<CartItemMock> _items = [
-    CartItemMock(
-      id: 'p1',
-      nombre: 'Pan Casero Integral (Paquete de 4)',
-      precio: 6.50,
-      cantidad: 2,
-      fotoUrl: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=400',
-    ),
-    CartItemMock(
-      id: 'p2',
-      nombre: 'Queso Criollo del Valle (500g)',
-      precio: 18.00,
-      cantidad: 1,
-      fotoUrl: 'https://images.unsplash.com/photo-1452195100486-9cc805987862?w=400',
-    ),
-    CartItemMock(
-      id: 'p3',
-      nombre: 'Tomates Frescos Seleccionados (1kg)',
-      precio: 8.50,
-      cantidad: 1,
-      fotoUrl: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?w=400',
-    ),
-  ];
-
+  final List<CarritoItem> _items = [];
   String _modalidadEntrega = 'RETIRO'; // 'RETIRO' or 'DOMICILIO'
   double _costoEnvio = 0.0;
+  bool _procesando = false;
 
-  double get _subtotal => _items.fold(0, (sum, item) => sum + (item.precio * item.cantidad));
+  double get _subtotal => _items.fold(0, (sum, item) => sum + item.subtotal);
   double get _total => _subtotal + _costoEnvio;
 
   void _cambiarModalidad(String modalidad) {
@@ -64,55 +37,62 @@ class _CarritoScreenState extends State<CarritoScreen> {
     });
   }
 
-  void _mostrarQrPago() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Pago por QR Simple', style: TextStyle(color: AppTheme.primaryButton, fontWeight: FontWeight.bold)),
-        content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text('Escanea el código QR con tu aplicación bancaria para completar el pago:', textAlign: TextAlign.center),
-          const SizedBox(height: 16),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: CachedNetworkImage(
-              imageUrl: 'https://images.unsplash.com/photo-1622630998477-20aa696ecb05?w=400',
-              height: 200,
-              width: 200,
-              fit: BoxFit.cover,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text('Total a pagar: Bs ${_total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.primaryButton)),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Cancelar', style: TextStyle(color: AppTheme.grey)),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryButton),
-          onPressed: () {
-            Navigator.pop(ctx);
-            setState(() {
-              _items.clear();
-            });
-            Notificaciones.mostrar(context, '¡Pago exitoso! Pedido enviado al emprendedor.');
-          },
-          child: const Text('Simular Pago Exitoso', style: TextStyle(color: Colors.white)),
-        ),
-      ],
-    ),
-    );
+  Future<void> _enviarPedido() async {
+    if (_items.isEmpty) return;
+    setState(() => _procesando = true);
+
+    try {
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+      if (user == null) {
+        throw 'Debe iniciar sesión para realizar un pedido.';
+      }
+
+      final negocioId = _items.first.producto.negocioId;
+
+      final pedidoRes = await supabase.from('pedidos').insert({
+        'cliente_id': user.id,
+        'negocio_id': negocioId,
+        'modalidad': _modalidadEntrega,
+        'subtotal': _subtotal,
+        'costo_envio': _costoEnvio,
+        'total': _total,
+        'estado': 'Pendiente',
+      }).select().single();
+
+      final pedidoId = pedidoRes['id'];
+
+      for (final item in _items) {
+        await supabase.from('items_pedido').insert({
+          'pedido_id': pedidoId,
+          'producto_id': item.producto.id,
+          'cantidad': item.cantidad,
+          'precio_unitario': item.producto.precio,
+        });
+      }
+
+      if (mounted) {
+        setState(() {
+          _items.clear();
+        });
+        Notificaciones.mostrar(context, '¡Pedido registrado y enviado a Supabase con éxito!');
+      }
+    } catch (e) {
+      if (mounted) {
+        Notificaciones.mostrar(context, 'Error al procesar pedido: $e', error: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _procesando = false);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mi Carrito (Puesto: Doña Rosa)', style: TextStyle(color: AppTheme.white)),
+        title: const Text('Mi Carrito', style: TextStyle(color: AppTheme.white)),
         backgroundColor: AppTheme.primaryButton,
       ),
       body: _items.isEmpty
@@ -147,10 +127,16 @@ class _CarritoScreenState extends State<CarritoScreen> {
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
                                 child: CachedNetworkImage(
-                                  imageUrl: item.fotoUrl,
+                                  imageUrl: item.producto.fotoUrl,
                                   height: 60,
                                   width: 60,
                                   fit: BoxFit.cover,
+                                  errorWidget: (context, url, error) => Container(
+                                    height: 60,
+                                    width: 60,
+                                    color: AppTheme.containers,
+                                    child: const Icon(Icons.fastfood, color: AppTheme.primaryButton),
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -158,9 +144,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(item.nombre, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                    Text(item.producto.nombre, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                     const SizedBox(height: 4),
-                                    Text('Bs ${item.precio.toStringAsFixed(2)} c/u', style: const TextStyle(color: AppTheme.primaryButton, fontWeight: FontWeight.bold)),
+                                    Text(item.producto.precioFormateado, style: const TextStyle(color: AppTheme.primaryButton, fontWeight: FontWeight.bold)),
                                   ],
                                 ),
                               ),
@@ -259,8 +245,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
                       ),
                       const SizedBox(height: 16),
                       BotonPrincipal(
-                        texto: 'Proceder al Pago (QR Simple)',
-                        onPressed: _mostrarQrPago,
+                        texto: 'Confirmar y Enviar Pedido',
+                        cargando: _procesando,
+                        onPressed: _enviarPedido,
                       ),
                     ],
                   ),

@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,14 @@ import '../../../core/widgets/ui_kit.dart';
 import '../../../services/storage_service.dart';
 import '../domain/producto.dart';
 import 'catalogo_provider.dart';
+
+class _FotoItem {
+  final String? url;
+  final XFile? file;
+  _FotoItem.url(this.url) : file = null;
+  _FotoItem.file(this.file) : url = null;
+  bool get isUrl => url != null;
+}
 
 class FormProductoScreen extends StatefulWidget {
   final Producto? producto; // If null, creating new product
@@ -26,8 +35,7 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
   late TextEditingController _stockBaseController;
 
   String _tipoInventario = 'RECURRENTE';
-  XFile? _fotoFile;
-  String? _fotoUrlActual;
+  List<_FotoItem> _fotos = [];
   final StorageService _storageService = StorageService();
   final ImagePicker _picker = ImagePicker();
   bool _guardando = false;
@@ -42,7 +50,7 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
     _stockController = TextEditingController(text: p != null ? p.stockDisponible.toString() : '10');
     _stockBaseController = TextEditingController(text: p != null ? p.stockBaseDiario.toString() : '10');
     _tipoInventario = p?.tipoInventario ?? 'RECURRENTE';
-    _fotoUrlActual = p?.fotoUrl;
+    _fotos = p?.fotosUrls.map((u) => _FotoItem.url(u)).toList() ?? [];
   }
 
   @override
@@ -55,24 +63,62 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
     super.dispose();
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    final XFile? image = await _picker.pickImage(
-      source: source,
-      maxWidth: 800,
-      maxHeight: 800,
-    );
-    if (image != null) {
-      setState(() {
-        _fotoFile = image;
-      });
+  int get _totalFotosCount => _fotos.length;
+
+  Future<void> _pickImages(ImageSource source) async {
+    if (_totalFotosCount >= 5) {
+      Notificaciones.mostrar(context, 'Máximo 5 fotografías permitidas por producto', error: true);
+      return;
     }
+
+    if (source == ImageSource.gallery) {
+      final List<XFile> images = await _picker.pickMultiImage(
+        maxWidth: 800,
+        maxHeight: 800,
+      );
+      if (images.isNotEmpty) {
+        setState(() {
+          for (final img in images) {
+            if (_fotos.length < 5) {
+              _fotos.add(_FotoItem.file(img));
+            }
+          }
+        });
+      }
+    } else {
+      final XFile? image = await _picker.pickImage(
+        source: source,
+        maxWidth: 800,
+        maxHeight: 800,
+      );
+      if (image != null) {
+        setState(() {
+          if (_fotos.length < 5) {
+            _fotos.add(_FotoItem.file(image));
+          }
+        });
+      }
+    }
+  }
+
+  void _eliminarFoto(int index) {
+    setState(() {
+      _fotos.removeAt(index);
+    });
+  }
+
+  void _moverAPortada(int index) {
+    setState(() {
+      final item = _fotos.removeAt(index);
+      _fotos.insert(0, item);
+    });
   }
 
   Future<void> _guardarProducto() async {
     if (!_formKey.currentState!.validate()) return;
 
-    if (_fotoFile == null && (_fotoUrlActual == null || _fotoUrlActual!.isEmpty)) {
-      Notificaciones.mostrar(context, 'La fotografía del producto es obligatoria', error: true);
+    if (_totalFotosCount == 0) {
+      Notificaciones.mostrar(context, 'Debe adjuntar al menos una fotografía del producto (1 a 5)', error: true);
       return;
     }
 
@@ -96,17 +142,22 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
     }
 
     try {
-      String fotoUrl = _fotoUrlActual ?? '';
-      if (_fotoFile != null) {
-        fotoUrl = await _storageService.uploadImage(_fotoFile!, 'productos_assets', 'productos');
-      }
+      final List<String> fotosFinales = await Future.wait(
+        _fotos.map((foto) async {
+          if (foto.isUrl) {
+            return foto.url!;
+          } else {
+            return await _storageService.uploadImage(foto.file!, 'productos_assets', 'productos');
+          }
+        }),
+      );
 
       final producto = Producto(
         id: isEditing ? widget.producto!.id : '',
         negocioId: negocio.id,
-        nombre: _nombreController.text,
-        descripcion: _descripcionController.text,
-        fotoUrl: fotoUrl,
+        nombre: _nombreController.text.trim(),
+        descripcion: _descripcionController.text.trim(),
+        fotosUrls: fotosFinales,
         precio: precio,
         tipoInventario: _tipoInventario,
         stockDisponible: stock,
@@ -114,6 +165,7 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
         stockBaseDiario: stockBase,
         activo: isEditing ? widget.producto!.activo : true,
         vendidoUnico: isEditing ? widget.producto!.vendidoUnico : false,
+        eliminado: isEditing ? widget.producto!.eliminado : false,
       );
 
       bool success;
@@ -156,53 +208,107 @@ class _FormProductoScreenState extends State<FormProductoScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(
-                  child: Stack(
+                Text(
+                  'Galería de Fotos ($_totalFotosCount/5)',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primaryButton),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 110,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
                     children: [
-                      _fotoFile != null
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: XFileImagePreview(file: _fotoFile!, height: 140, width: 140, fit: BoxFit.cover),
-                            )
-                          : (_fotoUrlActual != null && _fotoUrlActual!.isNotEmpty
-                              ? ClipRRect(
+                      ..._fotos.asMap().entries.map((entry) {
+                        final idx = entry.key;
+                        final foto = entry.value;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: GestureDetector(
+                            onTap: idx > 0 ? () => _moverAPortada(idx) : null,
+                            child: Stack(
+                              children: [
+                                ClipRRect(
                                   borderRadius: BorderRadius.circular(12),
-                                  child: Image.network(
-                                    _fotoUrlActual!,
-                                    height: 140,
-                                    width: 140,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, _, _) => Container(
-                                      height: 140,
-                                      width: 140,
-                                      decoration: BoxDecoration(color: AppTheme.containers, borderRadius: BorderRadius.circular(12)),
-                                      child: const Icon(Icons.fastfood, size: 50, color: AppTheme.primaryButton),
+                                  child: foto.isUrl
+                                      ? CachedNetworkImage(
+                                          imageUrl: foto.url!,
+                                          height: 100,
+                                          width: 100,
+                                          fit: BoxFit.cover,
+                                        )
+                                      : XFileImagePreview(
+                                          file: foto.file!,
+                                          height: 100,
+                                          width: 100,
+                                          fit: BoxFit.cover,
+                                        ),
+                                ),
+                                Positioned(
+                                  top: 4,
+                                  left: 4,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: idx == 0 ? AppTheme.primaryButton : Colors.black54,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      idx == 0 ? 'Portada' : 'Usar portada',
+                                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                                     ),
                                   ),
-                                )
-                              : Container(
-                                  height: 140,
-                                  width: 140,
-                                  decoration: BoxDecoration(color: AppTheme.containers, borderRadius: BorderRadius.circular(12)),
-                                  child: const Icon(Icons.fastfood, size: 50, color: AppTheme.primaryButton),
-                                )),
+                                ),
+                                Positioned(
+                                  top: 0,
+                                  right: 0,
+                                  child: IconButton(
+                                    icon: const Icon(Icons.remove_circle, color: Colors.red),
+                                    onPressed: () => _eliminarFoto(idx),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                      if (_totalFotosCount < 5)
+                        GestureDetector(
+                          onTap: () => _pickImages(ImageSource.gallery),
+                          child: Container(
+                            height: 100,
+                            width: 100,
+                            decoration: BoxDecoration(
+                              color: AppTheme.containers,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: AppTheme.primaryButton.withValues(alpha: 0.5)),
+                            ),
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.add_a_photo, color: AppTheme.primaryButton, size: 32),
+                                SizedBox(height: 4),
+                                Text('Añadir foto', style: TextStyle(color: AppTheme.primaryButton, fontSize: 11, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     OutlinedButton.icon(
-                      onPressed: () => _pickImage(ImageSource.camera),
+                      onPressed: () => _pickImages(ImageSource.camera),
                       icon: const Icon(Icons.camera_alt, size: 18),
                       label: const Text('Cámara'),
                     ),
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
-                      onPressed: () => _pickImage(ImageSource.gallery),
+                      onPressed: () => _pickImages(ImageSource.gallery),
                       icon: const Icon(Icons.photo_library, size: 18),
-                      label: const Text('Galería'),
+                      label: const Text('Galería múltiple'),
                     ),
                   ],
                 ),

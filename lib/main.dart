@@ -8,6 +8,7 @@ import 'features/negocio/presentation/catalogo_provider.dart';
 import 'features/negocio/presentation/emprendedor_shell.dart';
 import 'features/explorar/presentation/explorar_provider.dart';
 import 'features/explorar/presentation/vecino_shell.dart';
+import 'features/pedidos/presentation/carrito_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +36,9 @@ void main() async {
         ),
         ChangeNotifierProvider(
           create: (_) => ExplorarProvider(),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => CarritoProvider(),
         ),
       ],
       child: const DBarrioApp(),

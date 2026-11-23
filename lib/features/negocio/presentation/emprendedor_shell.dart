@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/presentation/auth_provider.dart';
-import '../../comanda/presentation/comanda_screen.dart';
+import '../../pedidos/presentation/comanda_screen.dart';
 import '../../profile/presentation/perfil_switch_screen.dart';
 import 'catalogo_provider.dart';
 import 'mi_catalogo_screen.dart';

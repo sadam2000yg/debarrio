@@ -9,8 +9,12 @@ import '../../../core/widgets/ui_kit.dart';
 import '../../auth/domain/negocio.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../../negocio/domain/producto.dart';
+import '../../pedidos/data/pedidos_repository.dart';
+import '../../pedidos/domain/item_carrito.dart';
+import '../../pedidos/domain/resena.dart';
+import '../../pedidos/presentation/carrito_provider.dart';
 import '../data/explorar_repository.dart';
-import '../domain/resena.dart';
+import 'detalle_producto_screen.dart';
 import 'explorar_provider.dart';
 
 class EscaparateNegocioScreen extends StatefulWidget {
@@ -55,7 +59,7 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
 
       if (neg != null) {
         final prods = await _repository.listarProductosDeNegocio(neg.id);
-        final res = await _repository.obtenerResenasDeNegocio(neg.id);
+        final res = await PedidosRepository().listarResenasNegocio(neg.id);
         if (mounted) {
           setState(() {
             _negocio = neg;
@@ -82,9 +86,58 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
     }
   }
 
+  void _agregarAlCarrito(BuildContext context, Producto prod, Negocio negocio, String usuarioId) {
+    final carrito = context.read<CarritoProvider>();
+    final error = carrito.agregarProducto(
+      negocio: negocio,
+      producto: prod,
+      usuarioActualId: usuarioId,
+    );
+
+    if (error == 'CONFLICTO_NEGOCIO') {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Conflicto de Carrito'),
+          content: Text(
+            "Tu carrito ya tiene productos de '${carrito.negocioActual?.nombre}'. ¿Deseas vaciarlo para agregar productos de '${negocio.nombre}'?",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryButton),
+              onPressed: () {
+                Navigator.pop(ctx);
+                carrito.reemplazarCarritoYAgregar(
+                  negocio: negocio,
+                  producto: prod,
+                  usuarioActualId: usuarioId,
+                );
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Agregado al carrito')),
+                );
+              },
+              child: const Text('Vaciar y agregar', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+    } else if (error != null) {
+      Notificaciones.mostrar(context, error, error: true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Agregado al carrito')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final authProvider = context.watch<AuthProvider>();
+    final carritoProvider = context.watch<CarritoProvider>();
     final currentUserId = authProvider.userProfile?.id;
 
     if (_cargando) {
@@ -114,20 +167,40 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            CachedNetworkImage(
-              imageUrl: negocio.storePhotoUrl,
-              height: 220,
-              fit: BoxFit.cover,
-              placeholder: (context, url) => Container(
-                height: 220,
-                color: AppTheme.containers,
-                child: const Center(child: CircularProgressIndicator()),
-              ),
-              errorWidget: (context, url, error) => Container(
-                height: 220,
-                color: AppTheme.containers,
-                child: const Icon(Icons.storefront, size: 60, color: AppTheme.primaryButton),
-              ),
+            Stack(
+              children: [
+                CachedNetworkImage(
+                  imageUrl: negocio.storePhotoUrl,
+                  height: 220,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) => Container(
+                    height: 220,
+                    color: AppTheme.containers,
+                    child: const Center(child: CircularProgressIndicator()),
+                  ),
+                  errorWidget: (context, url, error) => Container(
+                    height: 220,
+                    color: AppTheme.containers,
+                    child: const Icon(Icons.storefront, size: 60, color: AppTheme.primaryButton),
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: CircleAvatar(
+                    backgroundColor: Colors.black.withValues(alpha: 0.6),
+                    child: IconButton(
+                      icon: const Icon(Icons.open_in_full, color: Colors.white, size: 20),
+                      onPressed: () => abrirImagenExpandida(
+                        context,
+                        negocio.storePhotoUrl,
+                        titulo: negocio.nombre,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
             Padding(
               padding: const EdgeInsets.all(20.0),
@@ -156,6 +229,22 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(Icons.star, color: Colors.amber, size: 20),
+                      const SizedBox(width: 4),
+                      Text(
+                        negocio.calificacionPromedio.toStringAsFixed(1),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '(${negocio.totalResenas} ${negocio.totalResenas == 1 ? "opinión" : "opiniones"})',
+                        style: const TextStyle(color: AppTheme.grey, fontSize: 13),
                       ),
                     ],
                   ),
@@ -255,63 +344,87 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                             final prod = _productos[index];
                             final bool puedeComprar = negocio.abierto && !esMiPropioPuesto && prod.estaDisponible;
 
+                            final cartItem = carritoProvider.items.firstWhere(
+                              (item) => item.producto.id == prod.id,
+                              orElse: () => ItemCarrito(producto: prod, cantidad: 0),
+                            );
+                            final int cantidadEnCarrito = cartItem.cantidad;
+
                             return Card(
                               elevation: 2,
                               margin: const EdgeInsets.only(bottom: 12),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              child: Padding(
-                                padding: const EdgeInsets.all(12.0),
-                                child: Row(
-                                  children: [
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: CachedNetworkImage(
-                                        imageUrl: prod.fotoUrl,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => DetalleProductoScreen(
+                                        producto: prod,
+                                        puedeComprar: puedeComprar,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12.0),
+                                  child: Row(
+                                    children: [
+                                      SizedBox(
                                         height: 70,
                                         width: 70,
-                                        fit: BoxFit.cover,
-                                        errorWidget: (context, url, error) => Container(
-                                          height: 70,
-                                          width: 70,
-                                          color: AppTheme.containers,
-                                          child: const Icon(Icons.fastfood, color: AppTheme.primaryButton),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(8),
+                                          child: prod.fotosUrls.isNotEmpty
+                                              ? _ProductoFotoView(producto: prod)
+                                              : Container(
+                                                  color: AppTheme.containers,
+                                                  child: const Icon(Icons.fastfood, color: AppTheme.primaryButton),
+                                                ),
                                         ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(prod.nombre, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                                          const SizedBox(height: 4),
-                                          Text(prod.precioFormateado, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryButton)),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            prod.etiquetaDisponibilidad,
-                                            style: TextStyle(
-                                              color: prod.estaDisponible ? Colors.green.shade800 : Colors.red.shade800,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(prod.nombre, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                            const SizedBox(height: 4),
+                                            Text(prod.precioFormateado, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryButton)),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              prod.etiquetaDisponibilidad,
+                                              style: TextStyle(
+                                                color: prod.estaDisponible ? Colors.green.shade800 : Colors.red.shade800,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                             ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      SizedBox(
+                                        height: 48,
+                                        child: ElevatedButton(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: puedeComprar ? AppTheme.primaryButton : AppTheme.grey,
+                                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                                            minimumSize: Size.zero,
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                           ),
-                                        ],
+                                          onPressed: puedeComprar
+                                              ? () => _agregarAlCarrito(context, prod, negocio, currentUserId ?? '')
+                                              : null,
+                                          child: Text(
+                                            cantidadEnCarrito > 0 ? 'En carrito: $cantidadEnCarrito' : 'Agregar',
+                                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                    ElevatedButton(
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: puedeComprar ? AppTheme.primaryButton : AppTheme.grey,
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                        minimumSize: Size.zero,
-                                      ),
-                                      onPressed: puedeComprar
-                                          ? () {
-                                              Notificaciones.mostrar(context, 'Añadido al carrito — Próximo Sprint 3');
-                                            }
-                                          : null,
-                                      child: const Text('Comprar', style: TextStyle(color: Colors.white, fontSize: 12)),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             );
@@ -321,13 +434,17 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                   Text('Reseñas Verificadas', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   _resenas.isEmpty
-                      ? const Text('Aún no hay reseñas para este puesto.', style: TextStyle(color: AppTheme.grey))
+                      ? const Text('Sin reseñas todavía — Sé el primero en calificar', style: TextStyle(color: AppTheme.grey))
                       : ListView.builder(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
                           itemCount: _resenas.length,
                           itemBuilder: (context, index) {
                             final res = _resenas[index];
+                            final String fecha = res.createdAt != null
+                                ? '${res.createdAt!.day.toString().padLeft(2, '0')}/${res.createdAt!.month.toString().padLeft(2, '0')}/${res.createdAt!.year}'
+                                : '';
+
                             return Padding(
                               padding: const EdgeInsets.symmetric(vertical: 6.0),
                               child: Container(
@@ -342,7 +459,22 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Text(res.nombreUsuario, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                        Row(
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 16,
+                                              backgroundColor: AppTheme.containers,
+                                              backgroundImage: res.compradorSelfieUrl != null && res.compradorSelfieUrl!.isNotEmpty
+                                                  ? CachedNetworkImageProvider(res.compradorSelfieUrl!) as ImageProvider
+                                                  : null,
+                                              child: res.compradorSelfieUrl == null || res.compradorSelfieUrl!.isEmpty
+                                                  ? const Icon(Icons.person, size: 16, color: AppTheme.primaryButton)
+                                                  : null,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(res.compradorNombre ?? 'Vecino verificado', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                          ],
+                                        ),
                                         Row(
                                           children: List.generate(
                                             res.calificacion,
@@ -351,9 +483,13 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                                         ),
                                       ],
                                     ),
-                                    if (res.comentario.isNotEmpty) ...[
+                                    if (fecha.isNotEmpty) ...[
                                       const SizedBox(height: 4),
-                                      Text(res.comentario, style: const TextStyle(fontSize: 13)),
+                                      Text(fecha, style: const TextStyle(color: AppTheme.grey, fontSize: 11)),
+                                    ],
+                                    if (res.comentario.isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      Text(res.comentario, style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
                                     ],
                                   ],
                                 ),
@@ -367,6 +503,61 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ProductoFotoView extends StatefulWidget {
+  final Producto producto;
+
+  const _ProductoFotoView({required this.producto});
+
+  @override
+  State<_ProductoFotoView> createState() => _ProductoFotoViewState();
+}
+
+class _ProductoFotoViewState extends State<_ProductoFotoView> {
+  int _paginaActual = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final prod = widget.producto;
+    return Stack(
+      children: [
+        PageView.builder(
+          itemCount: prod.fotosUrls.length,
+          onPageChanged: (index) {
+            setState(() {
+              _paginaActual = index;
+            });
+          },
+          itemBuilder: (context, photoIndex) {
+            return CachedNetworkImage(
+              imageUrl: prod.fotosUrls[photoIndex],
+              fit: BoxFit.cover,
+              errorWidget: (context, url, error) => Container(
+                color: AppTheme.containers,
+                child: const Icon(Icons.fastfood, color: AppTheme.primaryButton),
+              ),
+            );
+          },
+        ),
+        Positioned(
+          bottom: 2,
+          right: 2,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              '${_paginaActual + 1}/${prod.fotosUrls.length}',
+              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

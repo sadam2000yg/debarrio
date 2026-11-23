@@ -12,7 +12,8 @@ class Negocio {
   final bool abierto;
   final String categoria;
   final double? distanciaMetros;
-  final double? calificacionPromedio;
+  final double calificacionPromedio;
+  final int totalResenas;
   final DateTime? createdAt;
 
   Negocio({
@@ -29,7 +30,8 @@ class Negocio {
     this.abierto = true,
     this.categoria = 'General',
     this.distanciaMetros,
-    this.calificacionPromedio,
+    this.calificacionPromedio = 0.0,
+    this.totalResenas = 0,
     this.createdAt,
   });
 
@@ -48,6 +50,7 @@ class Negocio {
     String? categoria,
     double? distanciaMetros,
     double? calificacionPromedio,
+    int? totalResenas,
     DateTime? createdAt,
   }) {
     return Negocio(
@@ -65,6 +68,7 @@ class Negocio {
       categoria: categoria ?? this.categoria,
       distanciaMetros: distanciaMetros ?? this.distanciaMetros,
       calificacionPromedio: calificacionPromedio ?? this.calificacionPromedio,
+      totalResenas: totalResenas ?? this.totalResenas,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -96,9 +100,18 @@ class Negocio {
       dist = (map['distanciaMetros'] as num).toDouble();
     }
 
-    double? calif;
+    double calif = 0.0;
     if (map['calificacion_promedio'] != null) {
       calif = (map['calificacion_promedio'] as num).toDouble();
+    } else if (map['calificacionPromedio'] != null) {
+      calif = (map['calificacionPromedio'] as num).toDouble();
+    }
+
+    int totalRes = 0;
+    if (map['total_resenas'] != null) {
+      totalRes = (map['total_resenas'] as num).toInt();
+    } else if (map['totalResenas'] != null) {
+      totalRes = (map['totalResenas'] as num).toInt();
     }
 
     return Negocio(
@@ -116,6 +129,7 @@ class Negocio {
       categoria: map['categoria']?.toString() ?? 'General',
       distanciaMetros: dist,
       calificacionPromedio: calif,
+      totalResenas: totalRes,
       createdAt: map['created_at'] != null ? DateTime.tryParse(map['created_at'].toString()) : null,
     );
   }
@@ -133,6 +147,8 @@ class Negocio {
       'shipping_cost': shippingCost,
       'abierto': abierto,
       'categoria': categoria,
+      'calificacion_promedio': calificacionPromedio,
+      'total_resenas': totalResenas,
     };
   }
 }

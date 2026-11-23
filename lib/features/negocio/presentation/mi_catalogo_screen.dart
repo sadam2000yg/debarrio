@@ -33,17 +33,14 @@ class _MiCatalogoScreenState extends State<MiCatalogoScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryButton),
             onPressed: () async {
+              final catalogo = ctx.read<CatalogoProvider>();
               Navigator.pop(ctx);
-              // ignore: use_build_context_synchronously
-              final catalogo = context.read<CatalogoProvider>();
               final success = await catalogo.reiniciarStockDiario();
-              if (!mounted) return;
+              if (!ctx.mounted) return;
               if (success) {
-                // ignore: use_build_context_synchronously
-                Notificaciones.mostrar(context, '¡Jornada abierta y stock diario restaurado!');
+                Notificaciones.mostrar(ctx, '¡Jornada abierta y stock diario restaurado!');
               } else {
-                // ignore: use_build_context_synchronously
-                Notificaciones.mostrar(context, catalogo.error ?? 'Error al reiniciar stock', error: true);
+                Notificaciones.mostrar(ctx, catalogo.error ?? 'Error al reiniciar stock', error: true);
               }
             },
             child: const Text('Confirmar', style: TextStyle(color: Colors.white)),
@@ -127,13 +124,13 @@ class _MiCatalogoScreenState extends State<MiCatalogoScreen> {
                                       height: 80,
                                       width: 80,
                                       fit: BoxFit.cover,
-                                      placeholder: (_, _) => Container(
+                                      placeholder: (context, url) => Container(
                                         height: 80,
                                         width: 80,
                                         color: AppTheme.containers,
                                         child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
                                       ),
-                                      errorWidget: (_, _, _) => Container(
+                                      errorWidget: (context, url, error) => Container(
                                         height: 80,
                                         width: 80,
                                         color: AppTheme.containers,
@@ -189,14 +186,52 @@ class _MiCatalogoScreenState extends State<MiCatalogoScreen> {
                                           catalogo.alternarActivoProducto(prod.id, val);
                                         },
                                       ),
-                                      IconButton(
-                                        icon: const Icon(Icons.edit, color: AppTheme.primaryButton),
-                                        onPressed: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(builder: (_) => FormProductoScreen(producto: prod)),
-                                          );
-                                        },
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.edit, color: AppTheme.primaryButton, size: 20),
+                                            onPressed: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(builder: (_) => FormProductoScreen(producto: prod)),
+                                              );
+                                            },
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                                            onPressed: () {
+                                              showDialog(
+                                                context: context,
+                                                builder: (ctx) => AlertDialog(
+                                                  title: const Text('Eliminar Producto'),
+                                                  content: Text('¿Estás seguro de dar de baja (eliminación lógica) el producto "${prod.nombre}"?'),
+                                                  actions: [
+                                                    TextButton(
+                                                      onPressed: () => Navigator.pop(ctx),
+                                                      child: const Text('Cancelar', style: TextStyle(color: AppTheme.grey)),
+                                                    ),
+                                                    ElevatedButton(
+                                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                                                      onPressed: () async {
+                                                        final catalogo = ctx.read<CatalogoProvider>();
+                                                        Navigator.pop(ctx);
+                                                        final success = await catalogo.eliminarProductoLogico(prod.id);
+                                                        if (!ctx.mounted) return;
+                                                        if (success) {
+                                                          Notificaciones.mostrar(ctx, 'Producto dado de baja con éxito');
+                                                        } else {
+                                                          Notificaciones.mostrar(ctx, catalogo.error ?? 'Error al eliminar producto', error: true);
+                                                        }
+                                                      },
+                                                      child: const Text('Eliminar', style: TextStyle(color: Colors.white)),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),

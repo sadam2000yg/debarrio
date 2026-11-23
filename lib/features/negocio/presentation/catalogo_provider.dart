@@ -70,7 +70,13 @@ class CatalogoProvider extends ChangeNotifier {
     }
   }
 
+  void setNegocioActual(Negocio negocio) {
+    _negocioActual = negocio;
+    notifyListeners();
+  }
+
   Future<bool> actualizarConfiguracionPuesto({
+    String? negocioId,
     required String nombre,
     required String descripcion,
     required List<String> deliveryOptions,
@@ -78,14 +84,15 @@ class CatalogoProvider extends ChangeNotifier {
     required String qrPhotoUrl,
     required String storePhotoUrl,
   }) async {
-    if (_negocioActual == null) return false;
+    final targetId = negocioId ?? _negocioActual?.id;
+    if (targetId == null) return false;
     _cargando = true;
     _error = null;
     notifyListeners();
 
     try {
       await _repository.actualizarConfiguracionPuesto(
-        negocioId: _negocioActual!.id,
+        negocioId: targetId,
         nombre: nombre,
         descripcion: descripcion,
         deliveryOptions: deliveryOptions,
@@ -93,14 +100,16 @@ class CatalogoProvider extends ChangeNotifier {
         qrPhotoUrl: qrPhotoUrl,
         storePhotoUrl: storePhotoUrl,
       );
-      _negocioActual = _negocioActual!.copyWith(
-        nombre: nombre,
-        descripcion: descripcion,
-        deliveryOptions: deliveryOptions,
-        shippingCost: shippingCost,
-        qrPhotoUrl: qrPhotoUrl,
-        storePhotoUrl: storePhotoUrl,
-      );
+      if (_negocioActual != null) {
+        _negocioActual = _negocioActual!.copyWith(
+          nombre: nombre,
+          descripcion: descripcion,
+          deliveryOptions: deliveryOptions,
+          shippingCost: shippingCost,
+          qrPhotoUrl: qrPhotoUrl,
+          storePhotoUrl: storePhotoUrl,
+        );
+      }
       _cargando = false;
       notifyListeners();
       return true;
@@ -172,6 +181,25 @@ class CatalogoProvider extends ChangeNotifier {
     }
   }
 
+  Future<bool> eliminarProductoLogico(String productoId) async {
+    _cargando = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _repository.eliminarProductoLogico(productoId);
+      _productos = _productos.where((p) => p.id != productoId).toList();
+      _cargando = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _error = e.toString();
+      _cargando = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<bool> reiniciarStockDiario() async {
     if (_negocioActual == null) return false;
     _cargando = true;
@@ -190,5 +218,13 @@ class CatalogoProvider extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+  }
+
+  void limpiar() {
+    _negocioActual = null;
+    _productos = [];
+    _error = null;
+    _cargando = false;
+    notifyListeners();
   }
 }
