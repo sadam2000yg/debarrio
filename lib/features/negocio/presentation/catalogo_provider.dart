@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../auth/domain/negocio.dart';
 import '../data/negocio_repository.dart';
 import '../domain/producto.dart';
@@ -10,6 +11,7 @@ class CatalogoProvider extends ChangeNotifier {
   String? _error;
   Negocio? _negocioActual;
   List<Producto> _productos = [];
+  RealtimeChannel? _canalProductosRealtime;
 
   bool get cargando => _cargando;
   String? get error => _error;
@@ -21,6 +23,30 @@ class CatalogoProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _suscribirRealtimeProductos() {
+    if (_negocioActual == null) return;
+    _canalProductosRealtime?.unsubscribe();
+    _canalProductosRealtime = Supabase.instance.client
+        .channel('productos_catalogo_${_negocioActual!.id}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'productos',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'negocio_id',
+            value: _negocioActual!.id,
+          ),
+          callback: (_) async {
+            if (_negocioActual != null) {
+              _productos = await _repository.listarProductosDeNegocio(_negocioActual!.id);
+              notifyListeners();
+            }
+          },
+        )
+        .subscribe();
+  }
+
   Future<void> cargarNegocioYProductos(String ownerId) async {
     _cargando = true;
     _error = null;
@@ -30,6 +56,7 @@ class CatalogoProvider extends ChangeNotifier {
       _negocioActual = await _repository.obtenerNegocioPorOwner(ownerId);
       if (_negocioActual != null) {
         _productos = await _repository.listarProductosDeNegocio(_negocioActual!.id);
+        _suscribirRealtimeProductos();
       } else {
         _productos = [];
       }
@@ -51,7 +78,6 @@ class CatalogoProvider extends ChangeNotifier {
       await _repository.actualizarEstadoOperativo(_negocioActual!.id, abierto);
       _negocioActual = _negocioActual!.copyWith(abierto: abierto);
       if (!abierto) {
-        // Refresh products locally
         _productos = _productos.map((p) {
           if (p.tipoInventario == 'DIARIO_PERECEDERO') {
             return p.copyWith(activo: false);
@@ -72,6 +98,7 @@ class CatalogoProvider extends ChangeNotifier {
 
   void setNegocioActual(Negocio negocio) {
     _negocioActual = negocio;
+    _suscribirRealtimeProductos();
     notifyListeners();
   }
 
@@ -221,6 +248,8 @@ class CatalogoProvider extends ChangeNotifier {
   }
 
   void limpiar() {
+    _canalProductosRealtime?.unsubscribe();
+    _canalProductosRealtime = null;
     _negocioActual = null;
     _productos = [];
     _error = null;

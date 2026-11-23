@@ -33,11 +33,41 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
   List<Producto> _productos = [];
   List<Resena> _resenas = [];
   String? _error;
+  RealtimeChannel? _canalProductos;
 
   @override
   void initState() {
     super.initState();
     _cargarDatosNegocio();
+    _suscribirRealtimeProductos();
+  }
+
+  void _suscribirRealtimeProductos() {
+    _canalProductos?.unsubscribe();
+    _canalProductos = Supabase.instance.client
+        .channel('productos_escaparate_${widget.negocioId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'productos',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'negocio_id',
+            value: widget.negocioId,
+          ),
+          callback: (_) {
+            _cargarDatosNegocio();
+          },
+        )
+        .subscribe();
+  }
+
+  @override
+  void dispose() {
+    if (_canalProductos != null) {
+      Supabase.instance.client.removeChannel(_canalProductos!);
+    }
+    super.dispose();
   }
 
   Future<void> _cargarDatosNegocio() async {
