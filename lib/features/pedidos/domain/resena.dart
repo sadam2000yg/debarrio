@@ -7,7 +7,7 @@ class Resena {
   final String comentario;
   final DateTime? createdAt;
   final String? compradorNombre;
-  final String? compradorSelfieUrl;
+  final String? compradorAvatarUrl;
 
   const Resena({
     required this.id,
@@ -18,19 +18,19 @@ class Resena {
     required this.comentario,
     this.createdAt,
     this.compradorNombre,
-    this.compradorSelfieUrl,
+    this.compradorAvatarUrl,
   });
 
   factory Resena.fromMap(Map<String, dynamic> map) {
     String? compNombre;
-    String? compSelfie;
+    String? compAvatar;
     if (map['perfiles'] is Map) {
       final per = map['perfiles'] as Map<String, dynamic>;
       compNombre = per['nombre']?.toString();
-      compSelfie = per['selfie_url']?.toString();
+      compAvatar = per['avatar_url']?.toString();
     } else {
       compNombre = map['comprador_nombre']?.toString();
-      compSelfie = map['comprador_selfie_url']?.toString();
+      compAvatar = map['comprador_avatar_url']?.toString();
     }
 
     return Resena(
@@ -38,11 +38,15 @@ class Resena {
       pedidoId: map['pedido_id']?.toString() ?? '',
       negocioId: map['negocio_id']?.toString() ?? '',
       compradorId: map['comprador_id']?.toString() ?? '',
-      calificacion: map['calificacion'] != null ? (map['calificacion'] as num).toInt() : 5,
+      calificacion: map['calificacion'] != null
+          ? (map['calificacion'] as num).toInt()
+          : 5,
       comentario: map['comentario']?.toString() ?? '',
-      createdAt: map['created_at'] != null ? DateTime.tryParse(map['created_at'].toString()) : null,
+      createdAt: map['created_at'] != null
+          ? DateTime.tryParse(map['created_at'].toString())
+          : null,
       compradorNombre: compNombre,
-      compradorSelfieUrl: compSelfie,
+      compradorAvatarUrl: compAvatar,
     );
   }
 

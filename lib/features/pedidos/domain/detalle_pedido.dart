@@ -23,9 +23,9 @@ class DetallePedido {
       pedidoId: map['pedido_id']?.toString() ?? '',
       productoId: map['producto_id']?.toString() ?? '',
       nombreProducto: map['nombre_producto']?.toString() ?? map['nombre']?.toString() ?? '',
-      cantidad: map['cantidad'] != null ? (map['cantidad'] as num).toInt() : 1,
-      precioUnitario: map['precio_unitario'] != null ? (map['precio_unitario'] as num).toDouble() : 0.0,
-      subtotal: map['subtotal'] != null ? (map['subtotal'] as num).toDouble() : 0.0,
+      cantidad: _enteroSeguro(map['cantidad'], defecto: 1),
+      precioUnitario: _numeroSeguro(map['precio_unitario']),
+      subtotal: _numeroSeguro(map['subtotal']),
     );
   }
 
@@ -40,4 +40,22 @@ class DetallePedido {
       'subtotal': subtotal,
     };
   }
+}
+
+int _enteroSeguro(dynamic valor, {int defecto = 0}) {
+  final parsed = valor is num
+      ? valor
+      : num.tryParse(valor?.toString().trim() ?? '');
+  if (parsed == null || !parsed.isFinite) return defecto;
+
+  final value = parsed.toDouble();
+  if (value != value.roundToDouble()) return defecto;
+  return value.toInt();
+}
+
+double _numeroSeguro(dynamic valor) {
+  final parsed = valor is num
+      ? valor.toDouble()
+      : double.tryParse(valor?.toString().trim() ?? '');
+  return parsed != null && parsed.isFinite ? parsed : 0.0;
 }

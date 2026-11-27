@@ -1,13 +1,16 @@
 import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/ui_kit.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../data/pedidos_repository.dart';
 import '../domain/pedido.dart';
+import 'pedido_history_filters.dart';
 
 class ComandaScreen extends StatefulWidget {
   const ComandaScreen({super.key});
@@ -22,24 +25,29 @@ class _ComandaScreenState extends State<ComandaScreen> {
   bool _cargando = true;
   String? _error;
   final Set<String> _procesandoIds = {};
+  final TextEditingController _controladorBusqueda = TextEditingController();
+  DateTimeRange? _rangoFecha;
+  String _modalidadFiltro = todasLasModalidades;
+  String _estadoFiltro = todosLosEstados;
   Timer? _timer;
   RealtimeChannel? _canalComanda;
 
+  String? _negocioIdActual;
+
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _inicializarComanda();
-    });
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _verificarNegocioYSincronizar();
   }
 
-  void _inicializarComanda() {
+  void _verificarNegocioYSincronizar() {
     final negocioId = context.read<AuthProvider>().negocio?.id;
-    if (negocioId != null && negocioId.isNotEmpty) {
-      _cargarPedidos();
-      _iniciarTimer();
-      _suscribirRealtime(negocioId);
-    } else {
+    if (negocioId != null &&
+        negocioId.isNotEmpty &&
+        negocioId != _negocioIdActual) {
+      _negocioIdActual = negocioId;
+      _inicializarComanda(negocioId);
+    } else if ((negocioId == null || negocioId.isEmpty) && _cargando) {
       setState(() {
         _cargando = false;
         _pedidos = [];
@@ -47,8 +55,16 @@ class _ComandaScreenState extends State<ComandaScreen> {
     }
   }
 
-  Future<void> _cargarPedidos() async {
-    final negocioId = context.read<AuthProvider>().negocio?.id;
+  void _inicializarComanda(String negocioId) {
+    setState(() => _cargando = true);
+    _cargarPedidos(negocioId);
+    _iniciarTimer();
+    _suscribirRealtime(negocioId);
+  }
+
+  Future<void> _cargarPedidos([String? negocioIdParam]) async {
+    final negocioId =
+        negocioIdParam ?? context.read<AuthProvider>().negocio?.id;
     if (negocioId == null || negocioId.isEmpty) {
       if (mounted) {
         setState(() {
@@ -86,7 +102,8 @@ class _ComandaScreenState extends State<ComandaScreen> {
 
       bool huboExpirados = false;
       for (final p in _pedidos) {
-        if ((p.estado == 'ESPERANDO_PAGO' || p.estado == 'PAGO_EN_REVISION') && p.tiempoRestante <= Duration.zero) {
+        if ((p.estado == 'ESPERANDO_PAGO' || p.estado == 'PAGO_EN_REVISION') &&
+            p.tiempoRestante <= Duration.zero) {
           huboExpirados = true;
           break;
         }
@@ -124,20 +141,37 @@ class _ComandaScreenState extends State<ComandaScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _controladorBusqueda.dispose();
     if (_canalComanda != null) {
       Supabase.instance.client.removeChannel(_canalComanda!);
     }
     super.dispose();
   }
 
-  Future<void> _responderPago({required String pedidoId, required bool confirmado}) async {
+  Future<void> _responderPago({
+    required String pedidoId,
+    required bool confirmado,
+  }) async {
+    final negocioId = context.read<AuthProvider>().negocio?.id;
+    if (negocioId == null || negocioId.isEmpty) {
+      Notificaciones.mostrar(
+        context,
+        'Error: No se encontró el puesto del emprendedor asociado.',
+        error: true,
+      );
+      return;
+    }
+
     setState(() {
       _procesandoIds.add(pedidoId);
     });
 
     try {
-      await _repository.responderPagoVendedor(pedidoId: pedidoId, confirmado: confirmado);
-      await _cargarPedidos();
+      await _repository.responderPagoVendedor(
+        pedidoId: pedidoId,
+        confirmado: confirmado,
+      );
+      await _cargarPedidos(negocioId);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -150,7 +184,12 @@ class _ComandaScreenState extends State<ComandaScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      Notificaciones.mostrar(context, 'Error al responder pago: $e', error: true);
+      final errorMessage = e
+          .toString()
+          .replaceFirst('Exception: ', '')
+          .replaceFirst('PostgrestException(message: ', '')
+          .replaceAll(')', '');
+      Notificaciones.mostrar(context, errorMessage, error: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -174,18 +213,72 @@ class _ComandaScreenState extends State<ComandaScreen> {
           ? 'Pedido marcado como LISTO — Vecino notificado'
           : 'Pedido ENTREGADO con éxito';
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(mensaje)),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(mensaje)));
     } catch (e) {
       if (!mounted) return;
-      Notificaciones.mostrar(context, 'Error al avanzar estado: $e', error: true);
+      Notificaciones.mostrar(
+        context,
+        'Error al avanzar estado: $e',
+        error: true,
+      );
     } finally {
       if (mounted) {
         setState(() {
           _procesandoIds.remove(pedido.id);
         });
       }
+    }
+  }
+
+  Future<void> _confirmarEntrega(Pedido pedido) async {
+    final controller = TextEditingController();
+    final pin = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirmar entrega'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          maxLength: 4,
+          decoration: const InputDecoration(
+            labelText: 'PIN de 4 dígitos del vecino',
+            hintText: '0000',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (pin == null) return;
+
+    setState(() => _procesandoIds.add(pedido.id));
+    try {
+      await _repository.confirmarEntregaConPin(pedidoId: pedido.id, pin: pin);
+      await _cargarPedidos();
+      if (mounted) {
+        Notificaciones.mostrar(context, 'Pedido ENTREGADO con éxito');
+      }
+    } catch (e) {
+      if (mounted) {
+        Notificaciones.mostrar(
+          context,
+          'No se pudo confirmar la entrega: $e',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _procesandoIds.remove(pedido.id));
     }
   }
 
@@ -221,7 +314,7 @@ class _ComandaScreenState extends State<ComandaScreen> {
         colorTxt = Colors.green.shade900;
         break;
       case 'CANCELADO_POR_TIEMPO':
-        label = 'Cancelado por tiempo';
+        label = 'Cancelado por tiempo (3 min)';
         colorBg = Colors.red.shade100;
         colorTxt = Colors.red.shade900;
         break;
@@ -233,9 +326,70 @@ class _ComandaScreenState extends State<ComandaScreen> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: colorBg, borderRadius: BorderRadius.circular(8)),
-      child: Text(label, style: TextStyle(color: colorTxt, fontWeight: FontWeight.bold, fontSize: 12)),
+      decoration: BoxDecoration(
+        color: colorBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: colorTxt,
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+        ),
+      ),
     );
+  }
+
+  Widget _buildCompradorNombre(Pedido pedido) {
+    final nombre = pedido.compradorNombre?.trim();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            nombre == null || nombre.isEmpty ? 'Nombre no disponible' : nombre,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+        ),
+        if (pedido.compradorVerificado) ...[
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.verified, size: 13, color: Colors.green.shade700),
+                const SizedBox(width: 3),
+                Text(
+                  'Vecino verificado',
+                  style: TextStyle(
+                    color: Colors.green.shade800,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _limpiarFiltros() {
+    _controladorBusqueda.clear();
+    setState(() {
+      _rangoFecha = null;
+      _modalidadFiltro = todasLasModalidades;
+      _estadoFiltro = todosLosEstados;
+    });
   }
 
   @override
@@ -245,7 +399,10 @@ class _ComandaScreenState extends State<ComandaScreen> {
     if (negocio == null) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Comanda del Puesto', style: TextStyle(color: AppTheme.white)),
+          title: const Text(
+            'Comanda del Puesto',
+            style: TextStyle(color: AppTheme.white),
+          ),
           backgroundColor: AppTheme.primaryButton,
         ),
         body: const Center(
@@ -261,397 +418,761 @@ class _ComandaScreenState extends State<ComandaScreen> {
       );
     }
 
-    final pagosPorVerificar = _pedidos.where((p) => p.estado == 'PAGO_EN_REVISION').toList();
-    final pedidosActivos = _pedidos.where((p) => p.estado == 'EN_PREPARACION' || p.estado == 'LISTO').toList();
-    final historialYEsperando = _pedidos.where((p) => p.estado == 'ESPERANDO_PAGO' || p.estado == 'ENTREGADO' || p.estado == 'CANCELADO_POR_TIEMPO' || p.estado == 'EN_DISPUTA').toList();
+    final pedidosFiltrados = filtrarPedidos(
+      pedidos: _pedidos,
+      busqueda: _controladorBusqueda.text,
+      rangoFecha: _rangoFecha,
+      modalidad: _modalidadFiltro,
+      estado: _estadoFiltro,
+    );
+    final pagosPorVerificar = pedidosFiltrados
+        .where((p) => p.estado == 'PAGO_EN_REVISION')
+        .toList();
+    final pedidosActivos = pedidosFiltrados
+        .where((p) => p.estado == 'EN_PREPARACION' || p.estado == 'LISTO')
+        .toList();
+    final historialYEsperando = pedidosFiltrados
+        .where(
+          (p) =>
+              p.estado == 'ESPERANDO_PAGO' ||
+              p.estado == 'ENTREGADO' ||
+              p.estado == 'CANCELADO_POR_TIEMPO' ||
+              p.estado == 'EN_DISPUTA',
+        )
+        .toList();
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Comanda — ${negocio.nombre}', style: const TextStyle(color: AppTheme.white)),
+        title: Text(
+          'Comanda — ${negocio.nombre}',
+          style: const TextStyle(color: AppTheme.white),
+        ),
         backgroundColor: AppTheme.primaryButton,
       ),
       body: _cargando
-          ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryButton))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppTheme.primaryButton),
+            )
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24.0),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      size: 60,
+                      color: AppTheme.error,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Error al cargar comanda: $_error',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppTheme.error),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryButton,
+                      ),
+                      onPressed: () {
+                        setState(() => _cargando = true);
+                        _cargarPedidos();
+                      },
+                      icon: const Icon(Icons.refresh, color: Colors.white),
+                      label: const Text(
+                        'Reintentar',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : _pedidos.isEmpty
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.receipt_long_outlined,
+                      size: 80,
+                      color: AppTheme.grey,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'No tienes pedidos pendientes en tu comanda',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Los nuevos pedidos de tus vecinos aparecerán aquí en tiempo real.',
+                      style: TextStyle(color: AppTheme.grey, fontSize: 14),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FiltrosHistorialPedidos(
+                    controladorBusqueda: _controladorBusqueda,
+                    rangoFecha: _rangoFecha,
+                    modalidad: _modalidadFiltro,
+                    estado: _estadoFiltro,
+                    onBusquedaChanged: (_) => setState(() {}),
+                    onRangoFechaChanged: (rango) =>
+                        setState(() => _rangoFecha = rango),
+                    onModalidadChanged: (modalidad) =>
+                        setState(() => _modalidadFiltro = modalidad),
+                    onEstadoChanged: (estado) =>
+                        setState(() => _estadoFiltro = estado),
+                    onLimpiar: _limpiarFiltros,
+                    hayFiltrosActivos:
+                        _controladorBusqueda.text.trim().isNotEmpty ||
+                        _rangoFecha != null ||
+                        _modalidadFiltro != todasLasModalidades ||
+                        _estadoFiltro != todosLosEstados,
+                  ),
+                  const SizedBox(height: 16),
+                  if (pedidosFiltrados.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 32),
+                      child: Text(
+                        'No hay pedidos que coincidan con los filtros.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: AppTheme.grey),
+                      ),
+                    ),
+                  if (pagosPorVerificar.isNotEmpty) ...[
+                    Row(
                       children: [
-                        const Icon(Icons.error_outline, size: 60, color: AppTheme.error),
-                        const SizedBox(height: 16),
-                        Text('Error al cargar comanda: $_error', textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.error)),
-                        const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryButton),
-                          onPressed: () {
-                            setState(() => _cargando = true);
-                            _cargarPedidos();
-                          },
-                          icon: const Icon(Icons.refresh, color: Colors.white),
-                          label: const Text('Reintentar', style: TextStyle(color: Colors.white)),
+                        const Icon(
+                          Icons.qr_code_scanner,
+                          color: Colors.amber,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Sección 1 — Pagos QR por verificar (${pagosPorVerificar.length})',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                                color: Colors.brown.shade900,
+                              ),
                         ),
                       ],
                     ),
-                  ),
-                )
-              : _pedidos.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.receipt_long_outlined, size: 80, color: AppTheme.grey),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'No tienes pedidos pendientes en tu comanda',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'Los nuevos pedidos de tus vecinos aparecerán aquí en tiempo real.',
-                              style: TextStyle(color: AppTheme.grey, fontSize: 14),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
+                    const SizedBox(height: 12),
+                    ...pagosPorVerificar.map((pedido) {
+                      final Duration restante = pedido.tiempoRestante;
+                      final bool esUrgente = restante.inSeconds < 45;
+                      final String minStr = restante.inMinutes
+                          .remainder(60)
+                          .toString()
+                          .padLeft(2, '0');
+                      final String secStr = restante.inSeconds
+                          .remainder(60)
+                          .toString()
+                          .padLeft(2, '0');
+                      final bool estaProcesando = _procesandoIds.contains(
+                        pedido.id,
+                      );
+
+                      return Card(
+                        key: ValueKey(pedido.id),
+                        elevation: 3,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(
+                            color: esUrgente
+                                ? Colors.red.shade400
+                                : Colors.amber.shade400,
+                            width: 2,
+                          ),
                         ),
-                      ),
-                    )
-                  : SingleChildScrollView(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (pagosPorVerificar.isNotEmpty) ...[
-                            Row(
-                              children: [
-                                const Icon(Icons.qr_code_scanner, color: Colors.amber, size: 24),
-                                const SizedBox(width: 8),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 20,
+                                          backgroundColor: AppTheme.containers,
+                                          backgroundImage:
+                                              pedido.compradorAvatarUrl !=
+                                                      null &&
+                                                  pedido
+                                                      .compradorAvatarUrl!
+                                                      .isNotEmpty
+                                              ? CachedNetworkImageProvider(
+                                                  pedido.compradorAvatarUrl!,
+                                                ) as ImageProvider
+                                              : null,
+                                          child:
+                                              pedido.compradorAvatarUrl ==
+                                                      null ||
+                                                  pedido
+                                                      .compradorAvatarUrl!
+                                                      .isEmpty
+                                              ? const Icon(
+                                                  Icons.person,
+                                                  size: 20,
+                                                  color: AppTheme.primaryButton,
+                                                )
+                                              : null,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: _buildCompradorNombre(pedido),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: esUrgente
+                                          ? Colors.red.shade100
+                                          : Colors.amber.shade100,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.timer_outlined,
+                                          size: 14,
+                                          color: esUrgente
+                                              ? Colors.red.shade900
+                                              : Colors.amber.shade900,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          '$minStr:$secStr min',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                            color: esUrgente
+                                                ? Colors.red.shade900
+                                                : Colors.amber.shade900,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Modalidad: ${pedido.modalidadEntrega == 'DELIVERY' ? "Envío a domicilio" : "Retiro en puerta"}',
+                                style: const TextStyle(
+                                  color: AppTheme.grey,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              if (pedido.referenciaEntrega != null &&
+                                  pedido.referenciaEntrega!.isNotEmpty)
                                 Text(
-                                  'Sección 1 — Pagos QR por verificar (${pagosPorVerificar.length})',
-                                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.brown.shade900),
+                                  'Referencia: ${pedido.referenciaEntrega}',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: AppTheme.textPrimary,
+                                  ),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            ...pagosPorVerificar.map((pedido) {
-                              final Duration restante = pedido.tiempoRestante;
-                              final bool esUrgente = restante.inSeconds < 45;
-                              final String minStr = restante.inMinutes.remainder(60).toString().padLeft(2, '0');
-                              final String secStr = restante.inSeconds.remainder(60).toString().padLeft(2, '0');
-                              final bool estaProcesando = _procesandoIds.contains(pedido.id);
-
-                              return Card(
-                                key: ValueKey(pedido.id),
-                                elevation: 3,
-                                margin: const EdgeInsets.only(bottom: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                  side: BorderSide(color: esUrgente ? Colors.red.shade400 : Colors.amber.shade400, width: 2),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                              const Divider(height: 20),
+                              ...pedido.detalles.map(
+                                (d) => Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 2.0,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              CircleAvatar(
-                                                radius: 20,
-                                                backgroundColor: AppTheme.containers,
-                                                backgroundImage: pedido.compradorSelfieUrl != null && pedido.compradorSelfieUrl!.isNotEmpty
-                                                    ? CachedNetworkImageProvider(pedido.compradorSelfieUrl!) as ImageProvider
-                                                    : null,
-                                                child: pedido.compradorSelfieUrl == null || pedido.compradorSelfieUrl!.isEmpty
-                                                    ? const Icon(Icons.person, size: 20, color: AppTheme.primaryButton)
-                                                    : null,
-                                              ),
-                                              const SizedBox(width: 10),
-                                              Text(
-                                                pedido.compradorNombre ?? 'Vecino verificado',
-                                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                                              ),
-                                            ],
-                                          ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                            decoration: BoxDecoration(
-                                              color: esUrgente ? Colors.red.shade100 : Colors.amber.shade100,
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                Icon(Icons.timer_outlined, size: 14, color: esUrgente ? Colors.red.shade900 : Colors.amber.shade900),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  '$minStr:$secStr min',
-                                                  style: TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 12,
-                                                    color: esUrgente ? Colors.red.shade900 : Colors.amber.shade900,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
+                                      Expanded(
+                                        child: Text(
+                                          '${d.cantidad}x ${d.nombreProducto}',
+                                          style: const TextStyle(fontSize: 14),
+                                        ),
                                       ),
-                                      const SizedBox(height: 12),
                                       Text(
-                                        'Modalidad: ${pedido.modalidadEntrega == 'DELIVERY' ? "Envío a domicilio" : "Retiro en puerta"}',
-                                        style: const TextStyle(color: AppTheme.grey, fontSize: 13, fontWeight: FontWeight.w500),
-                                      ),
-                                      if (pedido.referenciaEntrega != null && pedido.referenciaEntrega!.isNotEmpty)
-                                        Text('Referencia: ${pedido.referenciaEntrega}', style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
-                                      const Divider(height: 20),
-                                      ...pedido.detalles.map((d) => Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 2.0),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Expanded(child: Text('${d.cantidad}x ${d.nombreProducto}', style: const TextStyle(fontSize: 14))),
-                                            Text('Bs ${d.subtotal.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w500)),
-                                          ],
+                                        'Bs ${d.subtotal.toStringAsFixed(2)}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w500,
                                         ),
-                                      )),
-                                      const Divider(height: 20),
-                                      Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: Colors.amber.shade50,
-                                          borderRadius: BorderRadius.circular(10),
-                                          border: Border.all(color: Colors.amber.shade300),
-                                        ),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            const Text('Verificar en tu banco:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.brown)),
-                                            Text(
-                                              'Bs ${pedido.total.toStringAsFixed(2)}',
-                                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.primaryButton),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: SizedBox(
-                                              height: 48,
-                                              child: OutlinedButton.icon(
-                                                style: OutlinedButton.styleFrom(
-                                                  foregroundColor: Colors.red,
-                                                  side: const BorderSide(color: Colors.red),
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                                ),
-                                                onPressed: estaProcesando ? null : () => _responderPago(pedidoId: pedido.id, confirmado: false),
-                                                icon: const Icon(Icons.cancel_outlined, color: Colors.red, size: 18),
-                                                label: const Text('No realizado', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: SizedBox(
-                                              height: 48,
-                                              child: ElevatedButton.icon(
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor: AppTheme.primaryButton,
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                                ),
-                                                onPressed: estaProcesando ? null : () => _responderPago(pedidoId: pedido.id, confirmado: true),
-                                                icon: const Icon(Icons.check_circle, color: Colors.white, size: 18),
-                                                label: const Text('Confirmado', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
                                       ),
                                     ],
                                   ),
                                 ),
-                              );
-                            }),
-                            const SizedBox(height: 16),
-                          ],
-                          if (pedidosActivos.isNotEmpty) ...[
-                            Row(
-                              children: [
-                                const Icon(Icons.delivery_dining, color: AppTheme.primaryButton, size: 24),
-                                const SizedBox(width: 8),
+                              ),
+                              const Divider(height: 20),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.shade50,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: Colors.amber.shade300,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text(
+                                      'Verificar en tu banco:',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                        color: Colors.brown,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Bs ${pedido.total.toStringAsFixed(2)}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 18,
+                                        color: AppTheme.primaryButton,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: 48,
+                                      child: OutlinedButton.icon(
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.red,
+                                          side: const BorderSide(
+                                            color: Colors.red,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                        ),
+                                        onPressed: estaProcesando
+                                            ? null
+                                            : () => _responderPago(
+                                                pedidoId: pedido.id,
+                                                confirmado: false,
+                                              ),
+                                        icon: const Icon(
+                                          Icons.cancel_outlined,
+                                          color: Colors.red,
+                                          size: 18,
+                                        ),
+                                        label: const Text(
+                                          'No realizado',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: 48,
+                                      child: ElevatedButton.icon(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              AppTheme.primaryButton,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                        ),
+                                        onPressed: estaProcesando
+                                            ? null
+                                            : () => _responderPago(
+                                                pedidoId: pedido.id,
+                                                confirmado: true,
+                                              ),
+                                        icon: const Icon(
+                                          Icons.check_circle,
+                                          color: Colors.white,
+                                          size: 18,
+                                        ),
+                                        label: const Text(
+                                          'Confirmado',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 16),
+                  ],
+                  if (pedidosActivos.isNotEmpty) ...[
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.delivery_dining,
+                          color: AppTheme.primaryButton,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Sección 2 — Pedidos activos en preparación / listos (${pedidosActivos.length})',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ...pedidosActivos.map((pedido) {
+                      final String modalidad =
+                          pedido.modalidadEntrega == 'DELIVERY'
+                          ? 'Envío a domicilio'
+                          : 'Retiro en puerta';
+                      final bool estaProcesando = _procesandoIds.contains(
+                        pedido.id,
+                      );
+
+                      return Card(
+                        key: ValueKey(pedido.id),
+                        elevation: 3,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(
+                            color: pedido.estado == 'EN_PREPARACION'
+                                ? Colors.blue.shade400
+                                : Colors.indigo.shade400,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 20,
+                                          backgroundColor: AppTheme.containers,
+                                          backgroundImage:
+                                              pedido.compradorAvatarUrl !=
+                                                      null &&
+                                                  pedido
+                                                      .compradorAvatarUrl!
+                                                      .isNotEmpty
+                                              ? CachedNetworkImageProvider(
+                                                  pedido.compradorAvatarUrl!,
+                                                ) as ImageProvider
+                                              : null,
+                                          child:
+                                              pedido.compradorAvatarUrl ==
+                                                      null ||
+                                                  pedido
+                                                      .compradorAvatarUrl!
+                                                      .isEmpty
+                                              ? const Icon(
+                                                  Icons.person,
+                                                  size: 20,
+                                                  color: AppTheme.primaryButton,
+                                                )
+                                              : null,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: _buildCompradorNombre(pedido),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  _buildEstadoBadge(pedido.estado),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Modalidad: $modalidad',
+                                style: const TextStyle(
+                                  color: AppTheme.grey,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              if (pedido.referenciaEntrega != null &&
+                                  pedido.referenciaEntrega!.isNotEmpty)
                                 Text(
-                                  'Sección 2 — Pedidos activos en preparación / listos (${pedidosActivos.length})',
-                                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 17),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            ...pedidosActivos.map((pedido) {
-                              final String modalidad = pedido.modalidadEntrega == 'DELIVERY' ? 'Envío a domicilio' : 'Retiro en puerta';
-                              final bool estaProcesando = _procesandoIds.contains(pedido.id);
-
-                              return Card(
-                                key: ValueKey(pedido.id),
-                                elevation: 3,
-                                margin: const EdgeInsets.only(bottom: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                  side: BorderSide(
-                                    color: pedido.estado == 'EN_PREPARACION' ? Colors.blue.shade400 : Colors.indigo.shade400,
-                                    width: 1.5,
+                                  'Referencia: ${pedido.referenciaEntrega}',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: AppTheme.textPrimary,
                                   ),
                                 ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                              const Divider(height: 20),
+                              ...pedido.detalles.map(
+                                (d) => Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 2.0,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              CircleAvatar(
-                                                radius: 20,
-                                                backgroundColor: AppTheme.containers,
-                                                backgroundImage: pedido.compradorSelfieUrl != null && pedido.compradorSelfieUrl!.isNotEmpty
-                                                    ? CachedNetworkImageProvider(pedido.compradorSelfieUrl!) as ImageProvider
-                                                    : null,
-                                                child: pedido.compradorSelfieUrl == null || pedido.compradorSelfieUrl!.isEmpty
-                                                    ? const Icon(Icons.person, size: 20, color: AppTheme.primaryButton)
-                                                    : null,
-                                              ),
-                                              const SizedBox(width: 10),
-                                              Text(
-                                                pedido.compradorNombre ?? 'Vecino verificado',
-                                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                                              ),
-                                            ],
-                                          ),
-                                          _buildEstadoBadge(pedido.estado),
-                                        ],
+                                      Expanded(
+                                        child: Text(
+                                          '${d.cantidad}x ${d.nombreProducto}',
+                                          style: const TextStyle(fontSize: 14),
+                                        ),
                                       ),
-                                      const SizedBox(height: 12),
                                       Text(
-                                        'Modalidad: $modalidad',
-                                        style: const TextStyle(color: AppTheme.grey, fontSize: 13, fontWeight: FontWeight.w500),
-                                      ),
-                                      if (pedido.referenciaEntrega != null && pedido.referenciaEntrega!.isNotEmpty)
-                                        Text('Referencia: ${pedido.referenciaEntrega}', style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
-                                      const Divider(height: 20),
-                                      ...pedido.detalles.map((d) => Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 2.0),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Expanded(child: Text('${d.cantidad}x ${d.nombreProducto}', style: const TextStyle(fontSize: 14))),
-                                            Text('Bs ${d.subtotal.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w500)),
-                                          ],
+                                        'Bs ${d.subtotal.toStringAsFixed(2)}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w500,
                                         ),
-                                      )),
-                                      const Divider(height: 20),
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          const Text('Total:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                                          Text(
-                                            'Bs ${pedido.total.toStringAsFixed(2)}',
-                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.primaryButton),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 16),
-                                      if (pedido.estado == 'EN_PREPARACION')
-                                        SizedBox(
-                                          height: 48,
-                                          width: double.infinity,
-                                          child: ElevatedButton.icon(
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: AppTheme.primaryButton,
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                            ),
-                                            onPressed: estaProcesando ? null : () => _avanzarEstado(pedido),
-                                            icon: const Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
-                                            label: const Text('Marcar como Listo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                                          ),
-                                        ),
-                                      if (pedido.estado == 'LISTO')
-                                        SizedBox(
-                                          height: 48,
-                                          width: double.infinity,
-                                          child: ElevatedButton.icon(
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.green.shade800,
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                            ),
-                                            onPressed: estaProcesando ? null : () => _avanzarEstado(pedido),
-                                            icon: const Icon(Icons.handshake_outlined, color: Colors.white, size: 20),
-                                            label: const Text('Confirmar Entrega', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }),
-                            const SizedBox(height: 16),
-                          ],
-                          if (historialYEsperando.isNotEmpty) ...[
-                            Text(
-                              'Sección 3 — Historial reciente / Esperando pago (${historialYEsperando.length})',
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 17, color: AppTheme.grey),
-                            ),
-                            const SizedBox(height: 12),
-                            ...historialYEsperando.map((pedido) {
-                              final String modalidad = pedido.modalidadEntrega == 'DELIVERY' ? 'Envío a domicilio' : 'Retiro en puerta';
-                              return Card(
-                                key: ValueKey(pedido.id),
-                                elevation: 1,
-                                margin: const EdgeInsets.only(bottom: 12),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Text(
-                                            pedido.compradorNombre ?? 'Vecino verificado',
-                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                                          ),
-                                          _buildEstadoBadge(pedido.estado),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text('Modalidad: $modalidad', style: const TextStyle(color: AppTheme.grey, fontSize: 12)),
-                                      const SizedBox(height: 8),
-                                      ...pedido.detalles.map((d) => Text('${d.cantidad}x ${d.nombreProducto}', style: const TextStyle(fontSize: 13))),
-                                      const Divider(height: 16),
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          const Text('Total:', style: TextStyle(fontWeight: FontWeight.bold)),
-                                          Text('Bs ${pedido.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.primaryButton)),
-                                        ],
                                       ),
                                     ],
                                   ),
                                 ),
-                              );
-                            }),
-                          ],
-                        ],
+                              ),
+                              const Divider(height: 20),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    'Total:',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Bs ${pedido.total.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 18,
+                                      color: AppTheme.primaryButton,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              if (pedido.estado == 'EN_PREPARACION')
+                                SizedBox(
+                                  height: 48,
+                                  width: double.infinity,
+                                  child: ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppTheme.primaryButton,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                    onPressed: estaProcesando
+                                        ? null
+                                        : () => _avanzarEstado(pedido),
+                                    icon: const Icon(
+                                      Icons.check_circle_outline,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                    label: const Text(
+                                      'Marcar como Listo',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (pedido.estado == 'LISTO')
+                                Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (pedido.pinEntrega != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 10,
+                                        ),
+                                        child: Text(
+                                          'PIN de entrega: ${pedido.pinEntrega}',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 18,
+                                          ),
+                                        ),
+                                      ),
+                                    SizedBox(
+                                      height: 48,
+                                      child: ElevatedButton.icon(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              Colors.green.shade800,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                        ),
+                                        onPressed: estaProcesando
+                                            ? null
+                                            : () => _confirmarEntrega(pedido),
+                                        icon: const Icon(
+                                          Icons.handshake_outlined,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                        label: const Text(
+                                          'Confirmar Entrega',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 16),
+                  ],
+                  if (historialYEsperando.isNotEmpty) ...[
+                    Text(
+                      'Sección 3 — Historial reciente / Esperando pago (${historialYEsperando.length})',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 17,
+                        color: AppTheme.grey,
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    ...historialYEsperando.map((pedido) {
+                      final String modalidad =
+                          pedido.modalidadEntrega == 'DELIVERY'
+                          ? 'Envío a domicilio'
+                          : 'Retiro en puerta';
+                      return Card(
+                        key: ValueKey(pedido.id),
+                        elevation: 1,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Expanded(
+                                    child: _buildCompradorNombre(pedido),
+                                  ),
+                                  _buildEstadoBadge(pedido.estado),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Modalidad: $modalidad',
+                                style: const TextStyle(
+                                  color: AppTheme.grey,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ...pedido.detalles.map(
+                                (d) => Text(
+                                  '${d.cantidad}x ${d.nombreProducto}',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                              const Divider(height: 16),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    'Total:',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Bs ${pedido.total.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                      color: AppTheme.primaryButton,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ],
+              ),
+            ),
     );
   }
 }

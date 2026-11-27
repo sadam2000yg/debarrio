@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../../../core/theme/app_theme.dart';
 import '../../pedidos/presentation/carrito_screen.dart';
 import '../../pedidos/presentation/carrito_provider.dart';
@@ -18,20 +19,38 @@ class VecinoShell extends StatefulWidget {
 
 class _VecinoShellState extends State<VecinoShell> {
   int _currentIndex = 0;
+  String? _pedidoDestacadoId;
   final GlobalKey<NavigatorState> _explorarNavKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
     super.initState();
-    final auth = context.read<AuthProvider>();
-    final tab = auth.vecinoTabInicial;
-    if (tab > 0 && tab < 4) {
-      _currentIndex = tab;
-      auth.consumirTabInicial();
-    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ExplorarProvider>().inicializarUbicacionYBuscar(auth.userProfile);
+      if (!mounted) return;
+
+      final auth = context.read<AuthProvider>();
+      context.read<ExplorarProvider>().inicializarUbicacionYBuscar(
+        auth.userProfile,
+      );
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    final auth = context.watch<AuthProvider>();
+    final tabSolicitada = auth.vecinoTabInicial;
+
+    if (tabSolicitada != null) {
+      if (tabSolicitada >= 0 && tabSolicitada < 4) {
+        _currentIndex = tabSolicitada;
+        _pedidoDestacadoId = tabSolicitada == 2 ? auth.pedidoDestacadoId : null;
+      }
+      auth.consumirTabInicial();
+      auth.consumirPedidoDestacado();
+    }
   }
 
   @override
@@ -40,11 +59,13 @@ class _VecinoShellState extends State<VecinoShell> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (_currentIndex == 0 && (_explorarNavKey.currentState?.canPop() ?? false)) {
+        if (_currentIndex == 0 &&
+            (_explorarNavKey.currentState?.canPop() ?? false)) {
           _explorarNavKey.currentState!.pop();
         } else if (_currentIndex != 0) {
           setState(() {
             _currentIndex = 0;
+            _pedidoDestacadoId = null;
           });
         }
       },
@@ -62,7 +83,10 @@ class _VecinoShellState extends State<VecinoShell> {
               },
             ),
             const CarritoScreen(),
-            const MisComprasScreen(),
+            MisComprasScreen(
+              pedidoDestacadoId: _pedidoDestacadoId,
+              isActive: _currentIndex == 2,
+            ),
             const PerfilSwitchScreen(esPestana: true),
           ],
         ),
@@ -71,6 +95,9 @@ class _VecinoShellState extends State<VecinoShell> {
           onDestinationSelected: (index) {
             setState(() {
               _currentIndex = index;
+              if (index != 2) {
+                _pedidoDestacadoId = null;
+              }
             });
           },
           height: 65,
@@ -87,7 +114,10 @@ class _VecinoShellState extends State<VecinoShell> {
                   return Badge.count(
                     count: carrito.cantidadTotalItems,
                     isLabelVisible: carrito.cantidadTotalItems > 0,
-                    child: const Icon(Icons.shopping_cart, color: AppTheme.primaryButton),
+                    child: const Icon(
+                      Icons.shopping_cart,
+                      color: AppTheme.primaryButton,
+                    ),
                   );
                 },
               ),

@@ -4,7 +4,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/moderacion.dart';
 import '../../../core/widgets/ui_kit.dart';
 import '../../auth/domain/negocio.dart';
 import '../../auth/presentation/auth_provider.dart';
@@ -23,7 +25,8 @@ class EscaparateNegocioScreen extends StatefulWidget {
   const EscaparateNegocioScreen({super.key, required this.negocioId});
 
   @override
-  State<EscaparateNegocioScreen> createState() => _EscaparateNegocioScreenState();
+  State<EscaparateNegocioScreen> createState() =>
+      _EscaparateNegocioScreenState();
 }
 
 class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
@@ -34,6 +37,85 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
   List<Resena> _resenas = [];
   String? _error;
   RealtimeChannel? _canalProductos;
+  int _versionCarga = 0;
+  int _versionSuscripcion = 0;
+
+  Future<void> _reportarNegocio() async {
+    const motivos = [
+      'Contenido ofensivo',
+      'Información engañosa',
+      'Spam o enlace sospechoso',
+      'Otro',
+    ];
+    String motivo = motivos.first;
+    final detalle = TextEditingController();
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Reportar puesto'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: motivo,
+              items: motivos
+                  .map(
+                    (item) => DropdownMenuItem(value: item, child: Text(item)),
+                  )
+                  .toList(),
+              onChanged: (value) => motivo = value ?? motivo,
+              decoration: const InputDecoration(labelText: 'Motivo'),
+            ),
+            TextField(
+              controller: detalle,
+              maxLength: 600,
+              decoration: const InputDecoration(labelText: 'Detalle opcional'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Enviar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true || _negocio == null) {
+      detalle.dispose();
+      return;
+    }
+    try {
+      final error = Moderacion.validarReporte(
+        motivo: motivo,
+        detalle: detalle.text,
+      );
+      if (error != null) {
+        throw error;
+      }
+      await _repository.reportarNegocio(
+        negocioId: _negocio!.id,
+        motivo: motivo,
+        detalle: detalle.text,
+      );
+      if (mounted) {
+        Notificaciones.mostrar(
+          context,
+          'Reporte enviado. Gracias por cuidar la comunidad.',
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Notificaciones.mostrar(context, e.toString(), error: true);
+      }
+    } finally {
+      detalle.dispose();
+    }
+  }
 
   @override
   void initState() {
@@ -43,7 +125,12 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
   }
 
   void _suscribirRealtimeProductos() {
-    _canalProductos?.unsubscribe();
+    if (_canalProductos != null) {
+      _canalProductos!.unsubscribe();
+      Supabase.instance.client.removeChannel(_canalProductos!);
+      _canalProductos = null;
+    }
+    final int versionActual = ++_versionSuscripcion;
     _canalProductos = Supabase.instance.client
         .channel('productos_escaparate_${widget.negocioId}')
         .onPostgresChanges(
@@ -55,8 +142,9 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
             column: 'negocio_id',
             value: widget.negocioId,
           ),
-          callback: (_) {
-            _cargarDatosNegocio();
+          callback: (_) async {
+            if (versionActual != _versionSuscripcion) return;
+            await _cargarDatosNegocio();
           },
         )
         .subscribe();
@@ -64,59 +152,81 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
 
   @override
   void dispose() {
+    _versionCarga++;
+    _versionSuscripcion++;
     if (_canalProductos != null) {
+      _canalProductos!.unsubscribe();
       Supabase.instance.client.removeChannel(_canalProductos!);
+      _canalProductos = null;
     }
     super.dispose();
   }
 
   Future<void> _cargarDatosNegocio() async {
+    final int versionActual = ++_versionCarga;
     try {
+      if (!mounted) return;
       final explorar = context.read<ExplorarProvider>();
       Negocio? neg;
       try {
-        neg = explorar.negociosCercanos.firstWhere((n) => n.id == widget.negocioId);
+        neg = explorar.negociosCercanos.firstWhere(
+          (n) => n.id == widget.negocioId,
+        );
       } catch (_) {
         final response = await Supabase.instance.client
             .from('negocios')
             .select()
             .eq('id', widget.negocioId)
             .maybeSingle();
+        if (!mounted) return;
+        if (versionActual != _versionCarga) return;
         if (response != null) {
           neg = Negocio.fromMap(response);
         }
       }
 
+      if (!mounted) return;
+      if (versionActual != _versionCarga) return;
+
       if (neg != null) {
         final prods = await _repository.listarProductosDeNegocio(neg.id);
+        if (!mounted) return;
+        if (versionActual != _versionCarga) return;
+
         final res = await PedidosRepository().listarResenasNegocio(neg.id);
-        if (mounted) {
-          setState(() {
-            _negocio = neg;
-            _productos = prods;
-            _resenas = res;
-            _cargando = false;
-          });
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _error = 'No se encontró el negocio';
-            _cargando = false;
-          });
-        }
-      }
-    } catch (e) {
-      if (mounted) {
+        if (!mounted) return;
+        if (versionActual != _versionCarga) return;
+
         setState(() {
-          _error = e.toString();
+          _negocio = neg;
+          _productos = prods;
+          _resenas = res;
+          _cargando = false;
+        });
+      } else {
+        if (!mounted) return;
+        if (versionActual != _versionCarga) return;
+        setState(() {
+          _error = 'No se encontró el negocio';
           _cargando = false;
         });
       }
+    } catch (e) {
+      if (!mounted) return;
+      if (versionActual != _versionCarga) return;
+      setState(() {
+        _error = e.toString();
+        _cargando = false;
+      });
     }
   }
 
-  void _agregarAlCarrito(BuildContext context, Producto prod, Negocio negocio, String usuarioId) {
+  void _agregarAlCarrito(
+    BuildContext context,
+    Producto prod,
+    Negocio negocio,
+    String usuarioId,
+  ) {
     final carrito = context.read<CarritoProvider>();
     final error = carrito.agregarProducto(
       negocio: negocio,
@@ -138,7 +248,9 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryButton),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryButton,
+              ),
               onPressed: () {
                 Navigator.pop(ctx);
                 carrito.reemplazarCarritoYAgregar(
@@ -150,7 +262,10 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                   const SnackBar(content: Text('Agregado al carrito')),
                 );
               },
-              child: const Text('Vaciar y agregar', style: TextStyle(color: Colors.white)),
+              child: const Text(
+                'Vaciar y agregar',
+                style: TextStyle(color: Colors.white),
+              ),
             ),
           ],
         ),
@@ -158,9 +273,8 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
     } else if (error != null) {
       Notificaciones.mostrar(context, error, error: true);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Agregado al carrito')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Agregado al carrito')));
     }
   }
 
@@ -173,25 +287,51 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
     if (_cargando) {
       return Scaffold(
         appBar: AppBar(backgroundColor: AppTheme.primaryButton),
-        body: const Center(child: CircularProgressIndicator(color: AppTheme.primaryButton)),
+        body: const Center(
+          child: CircularProgressIndicator(color: AppTheme.primaryButton),
+        ),
       );
     }
 
     if (_error != null || _negocio == null) {
       return Scaffold(
         appBar: AppBar(backgroundColor: AppTheme.primaryButton),
-        body: Center(child: Text(_error ?? 'Negocio no disponible', style: const TextStyle(color: AppTheme.error))),
+        body: Center(
+          child: Text(
+            _error ?? 'Negocio no disponible',
+            style: const TextStyle(color: AppTheme.error),
+          ),
+        ),
       );
     }
 
     final negocio = _negocio!;
-    final bool esMiPropioPuesto = currentUserId != null && negocio.ownerId == currentUserId;
+    final bool esMiPropioPuesto =
+        currentUserId != null && negocio.ownerId == currentUserId;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(negocio.nombre, style: const TextStyle(color: AppTheme.white)),
+        title: Text(
+          negocio.nombre,
+          style: const TextStyle(color: AppTheme.white),
+        ),
         backgroundColor: AppTheme.primaryButton,
         iconTheme: const IconThemeData(color: AppTheme.white),
+        actions: [
+          if (!esMiPropioPuesto)
+            TextButton.icon(
+              onPressed: _reportarNegocio,
+              icon: const Icon(
+                Icons.flag_outlined,
+                color: Colors.white,
+                size: 18,
+              ),
+              label: const Text(
+                'Reportar',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+        ],
       ),
       body: SingleChildScrollView(
         child: Column(
@@ -212,7 +352,11 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                   errorWidget: (context, url, error) => Container(
                     height: 220,
                     color: AppTheme.containers,
-                    child: const Icon(Icons.storefront, size: 60, color: AppTheme.primaryButton),
+                    child: const Icon(
+                      Icons.storefront,
+                      size: 60,
+                      color: AppTheme.primaryButton,
+                    ),
                   ),
                 ),
                 Positioned(
@@ -221,7 +365,11 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                   child: CircleAvatar(
                     backgroundColor: Colors.black.withValues(alpha: 0.6),
                     child: IconButton(
-                      icon: const Icon(Icons.open_in_full, color: Colors.white, size: 20),
+                      icon: const Icon(
+                        Icons.open_in_full,
+                        color: Colors.white,
+                        size: 20,
+                      ),
                       onPressed: () => abrirImagenExpandida(
                         context,
                         negocio.storePhotoUrl,
@@ -243,19 +391,27 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                       Expanded(
                         child: Text(
                           negocio.nombre,
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.bold),
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: negocio.abierto ? Colors.green.shade100 : Colors.red.shade100,
+                          color: negocio.abierto
+                              ? Colors.green.shade100
+                              : Colors.red.shade100,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           negocio.abierto ? 'Abierto' : 'Cerrado',
                           style: TextStyle(
-                            color: negocio.abierto ? Colors.green.shade800 : Colors.red.shade800,
+                            color: negocio.abierto
+                                ? Colors.green.shade800
+                                : Colors.red.shade800,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -269,24 +425,66 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                       const SizedBox(width: 4),
                       Text(
                         negocio.calificacionPromedio.toStringAsFixed(1),
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
                       ),
                       const SizedBox(width: 6),
                       Text(
                         '(${negocio.totalResenas} ${negocio.totalResenas == 1 ? "opinión" : "opiniones"})',
-                        style: const TextStyle(color: AppTheme.grey, fontSize: 13),
+                        style: const TextStyle(
+                          color: AppTheme.grey,
+                          fontSize: 13,
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text(negocio.descripcion, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 15)),
+                  Text(
+                    negocio.descripcion,
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 15,
+                    ),
+                  ),
+                  if (negocio.horarioLegible != null) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.schedule,
+                          size: 16,
+                          color: AppTheme.grey,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Horario recurrente: ${negocio.horarioLegible}',
+                          style: const TextStyle(
+                            color: AppTheme.grey,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Wrap(
                     spacing: 8,
                     children: negocio.deliveryOptions.map((opt) {
                       return Chip(
-                        avatar: Icon(opt == 'DELIVERY_PROPIO' ? Icons.delivery_dining : Icons.store, size: 16, color: AppTheme.primaryButton),
-                        label: Text(opt == 'DELIVERY_PROPIO' ? 'Delivery Propio' : 'Recojo en Local'),
+                        avatar: Icon(
+                          opt == 'DELIVERY_PROPIO'
+                              ? Icons.delivery_dining
+                              : Icons.store,
+                          size: 16,
+                          color: AppTheme.primaryButton,
+                        ),
+                        label: Text(
+                          opt == 'DELIVERY_PROPIO'
+                              ? 'Delivery Propio'
+                              : 'Recojo en Local',
+                        ),
                         backgroundColor: AppTheme.containers,
                       );
                     }).toList(),
@@ -307,7 +505,10 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                           Expanded(
                             child: Text(
                               'Este es tu propio puesto. No puedes comprar tus propios productos en Modo Vecino.',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.brown),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.brown,
+                              ),
                             ),
                           ),
                         ],
@@ -325,13 +526,20 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                       child: const Center(
                         child: Text(
                           'El puesto se encuentra cerrado temporalmente.',
-                          style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.error),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.error,
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 16),
                   ],
-                  Text('Ubicación del Puesto', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    'Ubicación del Puesto',
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 8),
                   SizedBox(
                     height: 160,
@@ -353,7 +561,11 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                                 point: LatLng(negocio.lat, negocio.lng),
                                 width: 40,
                                 height: 40,
-                                child: const Icon(Icons.location_pin, color: Colors.red, size: 40),
+                                child: const Icon(
+                                  Icons.location_pin,
+                                  color: Colors.red,
+                                  size: 40,
+                                ),
                               ),
                             ],
                           ),
@@ -362,28 +574,41 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  Text('Catálogo de Productos', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 20)),
+                  Text(
+                    'Catálogo de Productos',
+                    style: Theme.of(context).textTheme.titleLarge
+                        ?.copyWith(fontSize: 20),
+                  ),
                   const SizedBox(height: 12),
                   _productos.isEmpty
-                      ? const Text('No hay productos disponibles en este momento.', style: TextStyle(color: AppTheme.grey))
+                      ? const Text(
+                          'No hay productos disponibles en este momento.',
+                          style: TextStyle(color: AppTheme.grey),
+                        )
                       : ListView.builder(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
                           itemCount: _productos.length,
                           itemBuilder: (context, index) {
                             final prod = _productos[index];
-                            final bool puedeComprar = negocio.abierto && !esMiPropioPuesto && prod.estaDisponible;
+                            final bool puedeComprar =
+                                negocio.abierto &&
+                                !esMiPropioPuesto &&
+                                prod.estaDisponible;
 
                             final cartItem = carritoProvider.items.firstWhere(
                               (item) => item.producto.id == prod.id,
-                              orElse: () => ItemCarrito(producto: prod, cantidad: 0),
+                              orElse: () =>
+                                  ItemCarrito(producto: prod, cantidad: 0),
                             );
                             final int cantidadEnCarrito = cartItem.cantidad;
 
                             return Card(
                               elevation: 2,
                               margin: const EdgeInsets.only(bottom: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(12),
                                 onTap: () {
@@ -393,6 +618,7 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                                       builder: (_) => DetalleProductoScreen(
                                         producto: prod,
                                         puedeComprar: puedeComprar,
+                                        negocio: negocio,
                                       ),
                                     ),
                                   );
@@ -405,28 +631,51 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                                         height: 70,
                                         width: 70,
                                         child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(8),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                           child: prod.fotosUrls.isNotEmpty
-                                              ? _ProductoFotoView(producto: prod)
+                                              ? _ProductoFotoView(
+                                                  producto: prod,
+                                                )
                                               : Container(
                                                   color: AppTheme.containers,
-                                                  child: const Icon(Icons.fastfood, color: AppTheme.primaryButton),
+                                                  child: const Icon(
+                                                    Icons.fastfood,
+                                                    color:
+                                                        AppTheme.primaryButton,
+                                                  ),
                                                 ),
                                         ),
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
                                         child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
-                                            Text(prod.nombre, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                            Text(
+                                              prod.nombre,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 15,
+                                              ),
+                                            ),
                                             const SizedBox(height: 4),
-                                            Text(prod.precioFormateado, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryButton)),
+                                            Text(
+                                              prod.precioFormateado,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                color: AppTheme.primaryButton,
+                                              ),
+                                            ),
                                             const SizedBox(height: 4),
                                             Text(
                                               prod.etiquetaDisponibilidad,
                                               style: TextStyle(
-                                                color: prod.estaDisponible ? Colors.green.shade800 : Colors.red.shade800,
+                                                color: prod.estaDisponible
+                                                    ? Colors.green.shade800
+                                                    : Colors.red.shade800,
                                                 fontSize: 12,
                                                 fontWeight: FontWeight.bold,
                                               ),
@@ -439,17 +688,35 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                                         height: 48,
                                         child: ElevatedButton(
                                           style: ElevatedButton.styleFrom(
-                                            backgroundColor: puedeComprar ? AppTheme.primaryButton : AppTheme.grey,
-                                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                                            backgroundColor: puedeComprar
+                                                ? AppTheme.primaryButton
+                                                : AppTheme.grey,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                            ),
                                             minimumSize: Size.zero,
-                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
                                           ),
                                           onPressed: puedeComprar
-                                              ? () => _agregarAlCarrito(context, prod, negocio, currentUserId ?? '')
+                                              ? () => _agregarAlCarrito(
+                                                  context,
+                                                  prod,
+                                                  negocio,
+                                                  currentUserId ?? '',
+                                                )
                                               : null,
                                           child: Text(
-                                            cantidadEnCarrito > 0 ? 'En carrito: $cantidadEnCarrito' : 'Agregar',
-                                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                            cantidadEnCarrito > 0
+                                                ? 'En carrito: $cantidadEnCarrito'
+                                                : 'Agregar',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -461,22 +728,32 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                           },
                         ),
                   const SizedBox(height: 24),
-                  Text('Reseñas Verificadas', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    'Reseñas Verificadas',
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 8),
                   _resenas.isEmpty
-                      ? const Text('Sin reseñas todavía — Sé el primero en calificar', style: TextStyle(color: AppTheme.grey))
+                      ? const Text(
+                          'Sin reseñas todavía — Sé el primero en calificar',
+                          style: TextStyle(color: AppTheme.grey),
+                        )
                       : ListView.builder(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
                           itemCount: _resenas.length,
                           itemBuilder: (context, index) {
                             final res = _resenas[index];
+                            final nombreComprador = res.compradorNombre?.trim();
                             final String fecha = res.createdAt != null
                                 ? '${res.createdAt!.day.toString().padLeft(2, '0')}/${res.createdAt!.month.toString().padLeft(2, '0')}/${res.createdAt!.year}'
                                 : '';
 
                             return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 6.0),
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 6.0,
+                              ),
                               child: Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
@@ -487,39 +764,82 @@ class _EscaparateNegocioScreenState extends State<EscaparateNegocioScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
                                       children: [
                                         Row(
                                           children: [
                                             CircleAvatar(
                                               radius: 16,
-                                              backgroundColor: AppTheme.containers,
-                                              backgroundImage: res.compradorSelfieUrl != null && res.compradorSelfieUrl!.isNotEmpty
-                                                  ? CachedNetworkImageProvider(res.compradorSelfieUrl!) as ImageProvider
+                                              backgroundColor:
+                                                  AppTheme.containers,
+                                              backgroundImage:
+                                                  res.compradorAvatarUrl !=
+                                                          null &&
+                                                      res
+                                                          .compradorAvatarUrl!
+                                                          .isNotEmpty
+                                                  ? CachedNetworkImageProvider(
+                                                      res.compradorAvatarUrl!,
+                                                    ) as ImageProvider
                                                   : null,
-                                              child: res.compradorSelfieUrl == null || res.compradorSelfieUrl!.isEmpty
-                                                  ? const Icon(Icons.person, size: 16, color: AppTheme.primaryButton)
+                                              child:
+                                                  res.compradorAvatarUrl ==
+                                                          null ||
+                                                      res
+                                                          .compradorAvatarUrl!
+                                                          .isEmpty
+                                                  ? const Icon(
+                                                      Icons.person,
+                                                      size: 16,
+                                                      color: AppTheme
+                                                          .primaryButton,
+                                                    )
                                                   : null,
                                             ),
                                             const SizedBox(width: 8),
-                                            Text(res.compradorNombre ?? 'Vecino verificado', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                            Text(
+                                              nombreComprador == null ||
+                                                      nombreComprador.isEmpty
+                                                  ? 'Nombre no disponible'
+                                                  : nombreComprador,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
                                           ],
                                         ),
                                         Row(
                                           children: List.generate(
                                             res.calificacion,
-                                            (_) => const Icon(Icons.star, size: 14, color: Colors.amber),
+                                            (_) => const Icon(
+                                              Icons.star,
+                                              size: 14,
+                                              color: Colors.amber,
+                                            ),
                                           ),
                                         ),
                                       ],
                                     ),
                                     if (fecha.isNotEmpty) ...[
                                       const SizedBox(height: 4),
-                                      Text(fecha, style: const TextStyle(color: AppTheme.grey, fontSize: 11)),
+                                      Text(
+                                        fecha,
+                                        style: const TextStyle(
+                                          color: AppTheme.grey,
+                                          fontSize: 11,
+                                        ),
+                                      ),
                                     ],
                                     if (res.comentario.isNotEmpty) ...[
                                       const SizedBox(height: 6),
-                                      Text(res.comentario, style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
+                                      Text(
+                                        res.comentario,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          color: AppTheme.textPrimary,
+                                        ),
+                                      ),
                                     ],
                                   ],
                                 ),
@@ -567,7 +887,10 @@ class _ProductoFotoViewState extends State<_ProductoFotoView> {
               fit: BoxFit.cover,
               errorWidget: (context, url, error) => Container(
                 color: AppTheme.containers,
-                child: const Icon(Icons.fastfood, color: AppTheme.primaryButton),
+                child: const Icon(
+                  Icons.fastfood,
+                  color: AppTheme.primaryButton,
+                ),
               ),
             );
           },
@@ -583,7 +906,11 @@ class _ProductoFotoViewState extends State<_ProductoFotoView> {
             ),
             child: Text(
               '${_paginaActual + 1}/${prod.fotosUrls.length}',
-              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ),

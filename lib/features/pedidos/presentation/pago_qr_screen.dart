@@ -1,10 +1,13 @@
 import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/ui_kit.dart';
-import '../../carrito/presentation/mis_compras_screen.dart';
+import '../../auth/presentation/auth_provider.dart';
 import '../data/pedidos_repository.dart';
 import '../domain/pedido.dart';
 
@@ -39,12 +42,15 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
         });
       }
 
-      if (_restante <= Duration.zero && _pedidoActual.estado == 'ESPERANDO_PAGO') {
+      if (_restante <= Duration.zero &&
+          _pedidoActual.estado == 'ESPERANDO_PAGO') {
         _timer?.cancel();
         await _pedidosRepository.liberarPedidosExpirados();
         if (mounted) {
           setState(() {
-            _pedidoActual = _pedidoActual.copyWith(estado: 'CANCELADO_POR_TIEMPO');
+            _pedidoActual = _pedidoActual.copyWith(
+              estado: 'CANCELADO_POR_TIEMPO',
+            );
           });
         }
       }
@@ -63,7 +69,9 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
           ),
           callback: (payload) async {
             try {
-              final actualizado = await _pedidosRepository.obtenerPedidoPorId(widget.pedido.id);
+              final actualizado = await _pedidosRepository.obtenerPedidoPorId(
+                widget.pedido.id,
+              );
               if (mounted) {
                 setState(() {
                   _pedidoActual = actualizado;
@@ -98,7 +106,11 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
             children: [
               Text(
                 'Código QR - ${_pedidoActual.negocioNombre ?? "Puesto Barrial"}',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: AppTheme.textPrimary,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
@@ -108,23 +120,35 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                 height: 280,
                 fit: BoxFit.contain,
                 placeholder: (context, url) => const Center(
-                  child: CircularProgressIndicator(color: AppTheme.primaryButton),
+                  child: CircularProgressIndicator(
+                    color: AppTheme.primaryButton,
+                  ),
                 ),
-                errorWidget: (context, url, error) => const Icon(Icons.qr_code, size: 100, color: AppTheme.grey),
+                errorWidget: (context, url, error) =>
+                    const Icon(Icons.qr_code, size: 100, color: AppTheme.grey),
               ),
               const SizedBox(height: 16),
               Text(
                 'Monto: Bs ${_pedidoActual.total.toStringAsFixed(2)}',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.primaryButton),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                  color: AppTheme.primaryButton,
+                ),
               ),
               const SizedBox(height: 20),
               SizedBox(
                 height: 48,
                 width: double.infinity,
                 child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryButton),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryButton,
+                  ),
                   onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Cerrar', style: TextStyle(color: Colors.white)),
+                  child: const Text(
+                    'Cerrar',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ),
               ),
             ],
@@ -148,9 +172,14 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
             child: const Text('Aún no'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryButton),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryButton,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Sí, ya pagué', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Sí, ya pagué',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -165,15 +194,23 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
       if (!mounted) return;
 
       Notificaciones.mostrar(context, 'Pago notificado al emprendedor');
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MisComprasScreen(pedidoDestacadoId: _pedidoActual.id),
-        ),
+      final auth = context.read<AuthProvider>();
+
+      auth.seleccionarTabVecino(
+        2, // Mis Compras
+        pedidoId: _pedidoActual.id,
+      );
+
+      Navigator.of(context, rootNavigator: true).popUntil(
+        (route) => route.isFirst,
       );
     } catch (e) {
       if (!mounted) return;
-      Notificaciones.mostrar(context, 'Error al notificar pago: $e', error: true);
+      Notificaciones.mostrar(
+        context,
+        'Error al notificar pago: $e',
+        error: true,
+      );
     } finally {
       if (mounted) {
         setState(() => _enviandoPago = false);
@@ -185,13 +222,24 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
   Widget build(BuildContext context) {
     final bool esExpirado = _pedidoActual.estado == 'CANCELADO_POR_TIEMPO';
     final bool esUrgente = _restante.inSeconds < 20 && !esExpirado;
-    final String minutos = _restante.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final String segundos = _restante.inSeconds.remainder(60).toString().padLeft(2, '0');
-    final String modalidad = _pedidoActual.modalidadEntrega == 'DELIVERY' ? 'Envío a domicilio' : 'Retiro en puerta';
+    final String minutos = _restante.inMinutes
+        .remainder(60)
+        .toString()
+        .padLeft(2, '0');
+    final String segundos = _restante.inSeconds
+        .remainder(60)
+        .toString()
+        .padLeft(2, '0');
+    final String modalidad = _pedidoActual.modalidadEntrega == 'DELIVERY'
+        ? 'Envío a domicilio'
+        : 'Retiro en puerta';
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Pago por QR Simple', style: TextStyle(color: AppTheme.white)),
+        title: const Text(
+          'Pago por QR Simple',
+          style: TextStyle(color: AppTheme.white),
+        ),
         backgroundColor: AppTheme.primaryButton,
         iconTheme: const IconThemeData(color: AppTheme.white),
       ),
@@ -209,7 +257,9 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                   side: BorderSide(
-                    color: esExpirado || esUrgente ? Colors.red.shade400 : Colors.amber.shade400,
+                    color: esExpirado || esUrgente
+                        ? Colors.red.shade400
+                        : Colors.amber.shade400,
                   ),
                 ),
                 child: Padding(
@@ -219,7 +269,9 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                       Icon(
                         Icons.timer_outlined,
                         size: 36,
-                        color: esExpirado || esUrgente ? Colors.red.shade800 : Colors.amber.shade900,
+                        color: esExpirado || esUrgente
+                            ? Colors.red.shade800
+                            : Colors.amber.shade900,
                       ),
                       const SizedBox(width: 16),
                       Expanded(
@@ -227,17 +279,25 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              esExpirado ? '00:00 - Expirado' : '$minutos:$segundos min',
+                              esExpirado
+                                  ? '00:00 - Expirado'
+                                  : '$minutos:$segundos min',
                               style: TextStyle(
                                 fontSize: 24,
                                 fontWeight: FontWeight.bold,
-                                color: esExpirado || esUrgente ? Colors.red.shade900 : Colors.brown.shade900,
+                                color: esExpirado || esUrgente
+                                    ? Colors.red.shade900
+                                    : Colors.brown.shade900,
                               ),
                             ),
                             const SizedBox(height: 2),
                             const Text(
-                              'Tiempo de reserva de stock (1 min)',
-                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppTheme.textPrimary),
+                              'Tiempo de reserva de stock (3 min)',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: AppTheme.textPrimary,
+                              ),
                             ),
                           ],
                         ),
@@ -246,7 +306,8 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                   ),
                 ),
               ),
-              if (_pedidoActual.alertaPago != null && _pedidoActual.alertaPago!.isNotEmpty) ...[
+              if (_pedidoActual.alertaPago != null &&
+                  _pedidoActual.alertaPago!.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -257,12 +318,20 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+                      const Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.red,
+                        size: 28,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           _pedidoActual.alertaPago!,
-                          style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold, fontSize: 13),
+                          style: TextStyle(
+                            color: Colors.red.shade900,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ],
@@ -272,18 +341,30 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
               const SizedBox(height: 20),
               Card(
                 elevation: 2,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(20.0),
                   child: Column(
                     children: [
                       Text(
                         _pedidoActual.negocioNombre ?? 'Puesto Barrial',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.primaryButton),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                          color: AppTheme.primaryButton,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 4),
-                      Text('Modalidad: $modalidad', style: const TextStyle(color: AppTheme.grey, fontSize: 13)),
+                      Text(
+                        'Modalidad: $modalidad',
+                        style: const TextStyle(
+                          color: AppTheme.grey,
+                          fontSize: 13,
+                        ),
+                      ),
                       const SizedBox(height: 16),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12),
@@ -296,7 +377,11 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                             width: 220,
                             height: 220,
                             color: AppTheme.containers,
-                            child: const Center(child: CircularProgressIndicator(color: AppTheme.primaryButton)),
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                color: AppTheme.primaryButton,
+                              ),
+                            ),
                           ),
                           errorWidget: (context, url, error) => Container(
                             width: 220,
@@ -305,28 +390,49 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                             child: const Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.qr_code, size: 60, color: AppTheme.primaryButton),
+                                Icon(
+                                  Icons.qr_code,
+                                  size: 60,
+                                  color: AppTheme.primaryButton,
+                                ),
                                 SizedBox(height: 8),
-                                Text('QR no disponible', style: TextStyle(color: AppTheme.grey, fontSize: 12)),
+                                Text(
+                                  'QR no disponible',
+                                  style: TextStyle(
+                                    color: AppTheme.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
                         ),
                       ),
                       const SizedBox(height: 16),
-                      if (_pedidoActual.negocioQrUrl != null && _pedidoActual.negocioQrUrl!.isNotEmpty)
+                      if (_pedidoActual.negocioQrUrl != null &&
+                          _pedidoActual.negocioQrUrl!.isNotEmpty)
                         SizedBox(
                           height: 48,
                           child: OutlinedButton.icon(
-                            onPressed: () => _ampliarQr(context, _pedidoActual.negocioQrUrl!),
+                            onPressed: () => _ampliarQr(
+                              context,
+                              _pedidoActual.negocioQrUrl!,
+                            ),
                             icon: const Icon(Icons.open_in_full, size: 18),
-                            label: const Text('Ampliar código QR', style: TextStyle(fontWeight: FontWeight.bold)),
+                            label: const Text(
+                              'Ampliar código QR',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
                           ),
                         ),
                       const Divider(height: 28),
                       Text(
                         'Total a pagar: Bs ${_pedidoActual.total.toStringAsFixed(2)}',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: AppTheme.primaryButton),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 20,
+                          color: AppTheme.primaryButton,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                     ],
@@ -342,9 +448,12 @@ class _PagoQrScreenState extends State<PagoQrScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Text(
-                    'El tiempo de 1 minuto expiró y tu stock fue liberado',
+                    'El tiempo de 3 minutos expiró y tu stock fue liberado',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),

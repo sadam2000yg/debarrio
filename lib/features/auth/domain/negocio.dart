@@ -15,6 +15,9 @@ class Negocio {
   final double calificacionPromedio;
   final int totalResenas;
   final DateTime? createdAt;
+  final String? horaApertura;
+  final String? horaCierre;
+  final List<int> diasOperativos;
 
   Negocio({
     required this.id,
@@ -33,7 +36,14 @@ class Negocio {
     this.calificacionPromedio = 0.0,
     this.totalResenas = 0,
     this.createdAt,
+    this.horaApertura,
+    this.horaCierre,
+    this.diasOperativos = const [1, 2, 3, 4, 5, 6, 7],
   });
+
+  String? get horarioLegible => horaApertura == null || horaCierre == null
+      ? null
+      : '${horaApertura!.substring(0, 5)} - ${horaCierre!.substring(0, 5)}';
 
   Negocio copyWith({
     String? id,
@@ -52,6 +62,9 @@ class Negocio {
     double? calificacionPromedio,
     int? totalResenas,
     DateTime? createdAt,
+    String? horaApertura,
+    String? horaCierre,
+    List<int>? diasOperativos,
   }) {
     return Negocio(
       id: id ?? this.id,
@@ -70,6 +83,9 @@ class Negocio {
       calificacionPromedio: calificacionPromedio ?? this.calificacionPromedio,
       totalResenas: totalResenas ?? this.totalResenas,
       createdAt: createdAt ?? this.createdAt,
+      horaApertura: horaApertura ?? this.horaApertura,
+      horaCierre: horaCierre ?? this.horaCierre,
+      diasOperativos: diasOperativos ?? this.diasOperativos,
     );
   }
 
@@ -85,7 +101,9 @@ class Negocio {
 
     List<String> delivery = [];
     if (map['delivery_options'] is List) {
-      delivery = (map['delivery_options'] as List).map((e) => e.toString()).toList();
+      delivery = (map['delivery_options'] as List)
+          .map((e) => e.toString())
+          .toList();
     } else if (map['delivery_options'] is String) {
       delivery = [map['delivery_options'].toString()];
     }
@@ -124,13 +142,24 @@ class Negocio {
       storePhotoUrl: map['store_photo_url']?.toString() ?? '',
       qrPhotoUrl: map['qr_photo_url']?.toString() ?? '',
       deliveryOptions: delivery,
-      shippingCost: map['shipping_cost'] != null ? (map['shipping_cost'] as num).toInt() : 0,
+      shippingCost: map['shipping_cost'] != null
+          ? (map['shipping_cost'] as num).toInt()
+          : 0,
       abierto: map['abierto'] ?? true,
       categoria: map['categoria']?.toString() ?? 'General',
       distanciaMetros: dist,
       calificacionPromedio: calif,
       totalResenas: totalRes,
-      createdAt: map['created_at'] != null ? DateTime.tryParse(map['created_at'].toString()) : null,
+      createdAt: map['created_at'] != null
+          ? DateTime.tryParse(map['created_at'].toString())
+          : null,
+      horaApertura: map['hora_apertura']?.toString(),
+      horaCierre: map['hora_cierre']?.toString(),
+      diasOperativos: map['dias_operativos'] is List
+          ? (map['dias_operativos'] as List)
+                .map((e) => (e as num).toInt())
+                .toList()
+          : const [1, 2, 3, 4, 5, 6, 7],
     );
   }
 
@@ -149,6 +178,9 @@ class Negocio {
       'categoria': categoria,
       'calificacion_promedio': calificacionPromedio,
       'total_resenas': totalResenas,
+      'hora_apertura': horaApertura,
+      'hora_cierre': horaCierre,
+      'dias_operativos': diasOperativos,
     };
   }
 }

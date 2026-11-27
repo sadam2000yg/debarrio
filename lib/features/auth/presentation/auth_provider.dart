@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../../services/storage_service.dart';
 import '../domain/negocio.dart';
 import '../domain/user_profile.dart';
@@ -17,7 +18,8 @@ class AuthProvider extends ChangeNotifier {
   Negocio? _negocio;
   String _activeRole = 'VECINO'; // 'VECINO' or 'EMPRENDEDOR'
   bool _needsBusinessRegistration = false;
-  int _vecinoTabInicial = 0;
+  int? _vecinoTabInicial;
+  String? _pedidoDestacadoId;
 
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
@@ -25,12 +27,48 @@ class AuthProvider extends ChangeNotifier {
   Negocio? get negocio => _negocio;
   String get activeRole => _activeRole;
   bool get needsBusinessRegistration => _needsBusinessRegistration;
-  int get vecinoTabInicial => _vecinoTabInicial;
+  int? get vecinoTabInicial => _vecinoTabInicial;
+  String? get pedidoDestacadoId => _pedidoDestacadoId;
 
   void consumirTabInicial() {
-    _vecinoTabInicial = 0;
+    _vecinoTabInicial = null;
   }
-  bool get isAuthenticated => _supabase.auth.currentUser != null && _userProfile != null;
+
+  void seleccionarTabVecino(int tabIndex, {String? pedidoId}) {
+    _vecinoTabInicial = tabIndex;
+    _pedidoDestacadoId = pedidoId;
+    notifyListeners();
+  }
+
+  void consumirPedidoDestacado() {
+    _pedidoDestacadoId = null;
+  }
+
+  bool get isAuthenticated =>
+      _supabase.auth.currentUser != null && _userProfile != null;
+
+  Future<UserProfile> _perfilConFotosFirmadas(UserProfile profile) async {
+    Future<String> firmar(String path) => path.isEmpty
+        ? Future.value('')
+        : _storageService.createKycSignedUrl(path);
+
+    final fotos = await Future.wait<String>([
+      firmar(profile.selfieUrl),
+      firmar(profile.facadeUrl),
+      firmar(profile.ciAnversoUrl),
+      firmar(profile.ciReversoUrl),
+    ]);
+
+    return profile.copyWith(
+      selfieUrl: fotos[0],
+      facadeUrl: fotos[1],
+      ciAnversoUrl: fotos[2],
+      ciReversoUrl: fotos[3],
+      avatarUrl: profile.avatarPath == null || profile.avatarPath!.isEmpty
+          ? null
+          : _storageService.getProfileAvatarUrl(profile.avatarPath!),
+    );
+  }
 
   void clearError() {
     _errorMessage = null;
@@ -46,6 +84,26 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _validarFotosRegistro({
+    required XFile selfie,
+    required XFile facade,
+    required XFile ciAnverso,
+    required XFile ciReverso,
+  }) async {
+    final fotos = <MapEntry<String, XFile>>[
+      MapEntry('C.I. Anverso', ciAnverso),
+      MapEntry('C.I. Reverso', ciReverso),
+      MapEntry('selfie', selfie),
+      MapEntry('fachada', facade),
+    ];
+
+    for (final foto in fotos) {
+      if (await foto.value.length() == 0) {
+        throw 'La foto de ${foto.key} es obligatoria y no puede estar vacía.';
+      }
+    }
+  }
+
   Future<void> restaurarSesion() async {
     _isLoading = true;
     notifyListeners();
@@ -55,15 +113,28 @@ class AuthProvider extends ChangeNotifier {
       if (session != null) {
         final userId = session.user.id;
 
-        await _secureStorage.write(key: 'supabase_token', value: session.accessToken);
+        await _secureStorage.write(
+          key: 'supabase_token',
+          value: session.accessToken,
+        );
 
-        final profileRes = await _supabase.from('perfiles').select().eq('id', userId).maybeSingle();
+        final profileRes = await _supabase
+            .from('perfiles')
+            .select()
+            .eq('id', userId)
+            .maybeSingle();
         if (profileRes != null) {
-          _userProfile = UserProfile.fromMap(profileRes);
+          _userProfile = await _perfilConFotosFirmadas(
+            UserProfile.fromMap(profileRes),
+          );
           _activeRole = 'VECINO'; // Force initial active role to 'VECINO'
         }
 
-        final negocioRes = await _supabase.from('negocios').select().eq('owner_id', userId).maybeSingle();
+        final negocioRes = await _supabase
+            .from('negocios')
+            .select()
+            .eq('owner_id', userId)
+            .maybeSingle();
         if (negocioRes != null) {
           _negocio = Negocio.fromMap(negocioRes);
         }
@@ -88,20 +159,19 @@ class AuthProvider extends ChangeNotifier {
     required XFile ciReverso,
     required double lat,
     required double lng,
+    required String termsVersion,
   }) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      final emailCheck = await _supabase.from('perfiles').select('id').eq('email', email.trim().toLowerCase()).maybeSingle();
-      if (emailCheck != null) {
-        throw 'El correo electrónico ya está registrado en el sistema.';
-      }
-      final ciCheck = await _supabase.from('perfiles').select('id').eq('ci', ci.trim()).maybeSingle();
-      if (ciCheck != null) {
-        throw 'El número de C.I. ya está registrado en el sistema.';
-      }
+      await _validarFotosRegistro(
+        selfie: selfie,
+        facade: facade,
+        ciAnverso: ciAnverso,
+        ciReverso: ciReverso,
+      );
 
       final authResponse = await _supabase.auth.signUp(
         email: email.trim().toLowerCase(),
@@ -112,10 +182,40 @@ class AuthProvider extends ChangeNotifier {
       if (user == null) throw 'No se pudo crear el usuario en autenticación.';
       final userId = user.id;
 
-      final ciAnversoUrl = await _storageService.uploadImage(ciAnverso, 'kyc_docs', userId, customFileName: '$userId/ci_anverso.jpg');
-      final ciReversoUrl = await _storageService.uploadImage(ciReverso, 'kyc_docs', userId, customFileName: '$userId/ci_reverso.jpg');
-      final selfieUrl = await _storageService.uploadImage(selfie, 'kyc_docs', userId, customFileName: '$userId/selfie.jpg');
-      final facadeUrl = await _storageService.uploadImage(facade, 'kyc_docs', userId, customFileName: '$userId/facade.jpg');
+      if (_supabase.auth.currentSession == null) {
+        await _supabase.auth.signInWithPassword(
+          email: email.trim().toLowerCase(),
+          password: password,
+        );
+      }
+      if (_supabase.auth.currentUser?.id != userId) {
+        throw 'Inicia sesión con la cuenta recién creada para continuar el registro.';
+      }
+
+      final ciAnversoUrl = await _storageService.uploadImage(
+        ciAnverso,
+        'kyc_docs',
+        userId,
+        customFileName: '$userId/ci_anverso.jpg',
+      );
+      final ciReversoUrl = await _storageService.uploadImage(
+        ciReverso,
+        'kyc_docs',
+        userId,
+        customFileName: '$userId/ci_reverso.jpg',
+      );
+      final selfieUrl = await _storageService.uploadImage(
+        selfie,
+        'kyc_docs',
+        userId,
+        customFileName: '$userId/selfie.jpg',
+      );
+      final facadeUrl = await _storageService.uploadImage(
+        facade,
+        'kyc_docs',
+        userId,
+        customFileName: '$userId/facade.jpg',
+      );
 
       final profileData = {
         'id': userId,
@@ -130,24 +230,24 @@ class AuthProvider extends ChangeNotifier {
         'lat': lat,
         'lng': lng,
         'active_role': 'VECINO',
+        'terms_version': termsVersion,
+        'terms_accepted_at': DateTime.now().toUtc().toIso8601String(),
       };
 
       await _supabase.from('perfiles').insert(profileData);
 
-      if (authResponse.session == null) {
-        await _supabase.auth.signInWithPassword(
-          email: email.trim().toLowerCase(),
-          password: password,
-        );
-      }
-
-      final nuevoPerfil = UserProfile.fromMap(profileData);
+      final nuevoPerfil = await _perfilConFotosFirmadas(
+        UserProfile.fromMap(profileData),
+      );
       _userProfile = nuevoPerfil;
       _activeRole = 'VECINO';
       _vecinoTabInicial = 3;
 
       if (_supabase.auth.currentSession != null) {
-        await _secureStorage.write(key: 'supabase_token', value: _supabase.auth.currentSession!.accessToken);
+        await _secureStorage.write(
+          key: 'supabase_token',
+          value: _supabase.auth.currentSession!.accessToken,
+        );
       }
 
       _isLoading = false;
@@ -179,18 +279,31 @@ class AuthProvider extends ChangeNotifier {
         throw 'Credenciales inválidas o sesión no iniciada.';
       }
 
-      await _secureStorage.write(key: 'supabase_token', value: response.session!.accessToken);
+      await _secureStorage.write(
+        key: 'supabase_token',
+        value: response.session!.accessToken,
+      );
 
       final userId = response.user!.id;
-      final profileRes = await _supabase.from('perfiles').select().eq('id', userId).maybeSingle();
+      final profileRes = await _supabase
+          .from('perfiles')
+          .select()
+          .eq('id', userId)
+          .maybeSingle();
       if (profileRes == null) {
         throw 'Perfil de usuario no encontrado en la base de datos.';
       }
 
-      _userProfile = UserProfile.fromMap(profileRes);
+      _userProfile = await _perfilConFotosFirmadas(
+        UserProfile.fromMap(profileRes),
+      );
       _activeRole = 'VECINO';
 
-      final negocioRes = await _supabase.from('negocios').select().eq('owner_id', userId).maybeSingle();
+      final negocioRes = await _supabase
+          .from('negocios')
+          .select()
+          .eq('owner_id', userId)
+          .maybeSingle();
       if (negocioRes != null) {
         _negocio = Negocio.fromMap(negocioRes);
       } else {
@@ -218,6 +331,58 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> actualizarFotoPerfilPublica(XFile image) async {
+    final profile = _userProfile;
+    if (profile == null || profile.id.isEmpty) {
+      throw StateError('No hay un perfil autenticado para actualizar.');
+    }
+
+    final newPath = await _storageService.uploadProfileAvatar(
+      image,
+      profile.id,
+    );
+    String? previousPath;
+    try {
+      final response = await _supabase.rpc(
+        'actualizar_avatar_perfil',
+        params: {'p_avatar_path': newPath},
+      );
+      previousPath = response?.toString();
+    } catch (error, stackTrace) {
+      try {
+        await _storageService.deleteProfileAvatar(newPath, profile.id);
+      } catch (cleanupError) {
+        Error.throwWithStackTrace(
+          StateError(
+            'No se pudo guardar la foto de perfil ($error) y tampoco se pudo '
+            'limpiar el archivo temporal ($cleanupError).',
+          ),
+          stackTrace,
+        );
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    _userProfile = profile.copyWith(
+      avatarPath: newPath,
+      avatarUrl: _storageService.getProfileAvatarUrl(newPath),
+    );
+    notifyListeners();
+
+    if (previousPath != null &&
+        previousPath.isNotEmpty &&
+        previousPath != newPath) {
+      try {
+        await _storageService.deleteProfileAvatar(previousPath, profile.id);
+      } catch (error) {
+        throw StateError(
+          'La nueva foto se guardó, pero no se pudo eliminar la anterior: '
+          '$error',
+        );
+      }
+    }
+  }
+
   Future<bool> registrarNegocio({
     required String nombre,
     required String descripcion,
@@ -236,8 +401,18 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       final userId = _userProfile!.id;
-      final storeUrl = await _storageService.uploadImage(storePhoto, 'negocios_assets', userId, customFileName: '$userId/store.jpg');
-      final qrUrl = await _storageService.uploadImage(qrPhoto, 'negocios_assets', userId, customFileName: '$userId/qr.jpg');
+      final storeUrl = await _storageService.uploadImage(
+        storePhoto,
+        'negocios_assets',
+        userId,
+        customFileName: '$userId/store.jpg',
+      );
+      final qrUrl = await _storageService.uploadImage(
+        qrPhoto,
+        'negocios_assets',
+        userId,
+        customFileName: '$userId/qr.jpg',
+      );
 
       final negocioMap = <String, dynamic>{
         'owner_id': userId,
@@ -252,13 +427,21 @@ class AuthProvider extends ChangeNotifier {
       };
 
       try {
-        final res = await _supabase.from('negocios').insert(negocioMap).select().single();
+        final res = await _supabase
+            .from('negocios')
+            .insert(negocioMap)
+            .select()
+            .single();
         _negocio = Negocio.fromMap(res);
       } catch (_) {
         final fallbackMap = Map<String, dynamic>.from(negocioMap)
           ..remove('delivery_options')
           ..remove('shipping_cost');
-        final res = await _supabase.from('negocios').insert(fallbackMap).select().single();
+        final res = await _supabase
+            .from('negocios')
+            .insert(fallbackMap)
+            .select()
+            .single();
         _negocio = Negocio.fromMap(res).copyWith(
           deliveryOptions: deliveryOptions,
           shippingCost: shippingCost,

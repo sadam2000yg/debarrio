@@ -1,15 +1,20 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+
 import '../../../services/location_service.dart';
+import '../../../services/nominatim_service.dart';
 import '../../auth/domain/negocio.dart';
 import '../../auth/domain/user_profile.dart';
 import '../data/explorar_repository.dart';
 
 class ExplorarProvider extends ChangeNotifier {
   final ExplorarRepository _repository = ExplorarRepository();
+  final NominatimService _nominatim = NominatimService();
 
   bool _cargando = false;
   String? _error;
+  String? _direccionZona;
   List<Negocio> _negociosCercanos = [];
   double _lat = -16.5000;
   double _lng = -68.1500;
@@ -19,6 +24,7 @@ class ExplorarProvider extends ChangeNotifier {
 
   bool get cargando => _cargando;
   String? get error => _error;
+  String? get direccionZona => _direccionZona;
   List<Negocio> get negociosCercanos => _negociosCercanos;
   double get lat => _lat;
   double get lng => _lng;
@@ -63,6 +69,22 @@ class ExplorarProvider extends ChangeNotifier {
       _cargando = false;
       notifyListeners();
     }
+  }
+
+  Future<void> explorarZonaPorTexto(String consulta) async {
+    final lugares = await _nominatim.buscar(consulta);
+    if (lugares.isEmpty) {
+      throw const NominatimException(
+        'No encontramos esa calle o zona en Bolivia.',
+      );
+    }
+
+    final lugar = lugares.first;
+    _lat = lugar.location.latitude;
+    _lng = lugar.location.longitude;
+    _direccionZona = lugar.displayName;
+    notifyListeners();
+    await buscarNegocios();
   }
 
   void setCategoria(String categoria) {

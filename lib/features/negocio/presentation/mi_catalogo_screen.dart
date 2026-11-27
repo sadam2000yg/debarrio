@@ -36,6 +36,7 @@ class _MiCatalogoScreenState extends State<MiCatalogoScreen> {
               final catalogo = ctx.read<CatalogoProvider>();
               Navigator.pop(ctx);
               final success = await catalogo.reiniciarStockDiario();
+              if (!mounted) return;
               if (!ctx.mounted) return;
               if (success) {
                 Notificaciones.mostrar(ctx, '¡Jornada abierta y stock diario restaurado!');
@@ -95,19 +96,30 @@ class _MiCatalogoScreenState extends State<MiCatalogoScreen> {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: catalogo.cargando && catalogo.productos.isEmpty
-                ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryButton))
-                : productos.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No hay productos en esta categoría.',
-                          style: TextStyle(color: AppTheme.grey, fontSize: 16),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: productos.length,
-                        padding: const EdgeInsets.all(16),
-                        itemBuilder: (context, index) {
+            child: RefreshIndicator(
+              color: AppTheme.primaryButton,
+              onRefresh: () async {
+                await context.read<CatalogoProvider>().recargarProductos();
+                if (!mounted) return;
+              },
+              child: catalogo.cargando && catalogo.productos.isEmpty
+                  ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryButton))
+                  : productos.isEmpty
+                      ? ListView(
+                          children: const [
+                            SizedBox(height: 100),
+                            Center(
+                              child: Text(
+                                'No hay productos en esta categoría.',
+                                style: TextStyle(color: AppTheme.grey, fontSize: 16),
+                              ),
+                            ),
+                          ],
+                        )
+                      : ListView.builder(
+                          itemCount: productos.length,
+                          padding: const EdgeInsets.all(16),
+                          itemBuilder: (context, index) {
                           final prod = productos[index];
                           return Card(
                             elevation: 2,
@@ -217,6 +229,7 @@ class _MiCatalogoScreenState extends State<MiCatalogoScreen> {
                                                         final catalogo = ctx.read<CatalogoProvider>();
                                                         Navigator.pop(ctx);
                                                         final success = await catalogo.eliminarProductoLogico(prod.id);
+                                                        if (!mounted) return;
                                                         if (!ctx.mounted) return;
                                                         if (success) {
                                                           Notificaciones.mostrar(ctx, 'Producto dado de baja con éxito');
@@ -241,6 +254,7 @@ class _MiCatalogoScreenState extends State<MiCatalogoScreen> {
                           );
                         },
                       ),
+            ),
           ),
         ],
       ),

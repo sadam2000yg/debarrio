@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
+
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/validadores.dart';
 import '../../../core/widgets/ui_kit.dart';
+import '../../../services/nominatim_service.dart';
 import 'auth_provider.dart';
 
 class RegistroScreen extends StatefulWidget {
@@ -21,6 +25,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
   final _telefonoController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _direccionController = TextEditingController();
 
   XFile? _selfieFile;
   XFile? _facadeFile;
@@ -29,6 +34,11 @@ class _RegistroScreenState extends State<RegistroScreen> {
   LatLng _selectedLocation = const LatLng(-16.5000, -68.1500);
 
   final ImagePicker _picker = ImagePicker();
+  final NominatimService _nominatim = NominatimService();
+  Timer? _debounceDireccion;
+  List<NominatimPlace> _sugerenciasDireccion = const [];
+  String? _direccionLegible;
+  bool _aceptaTerminos = false;
 
   @override
   void dispose() {
@@ -37,13 +47,51 @@ class _RegistroScreenState extends State<RegistroScreen> {
     _telefonoController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _direccionController.dispose();
+    _debounceDireccion?.cancel();
     super.dispose();
+  }
+
+  void _buscarDireccion(String texto) {
+    _debounceDireccion?.cancel();
+    if (texto.trim().length < 3) {
+      setState(() => _sugerenciasDireccion = const []);
+      return;
+    }
+    _debounceDireccion = Timer(const Duration(milliseconds: 650), () async {
+      try {
+        final lugares = await _nominatim.buscar(texto);
+        if (mounted) setState(() => _sugerenciasDireccion = lugares);
+      } catch (e) {
+        if (mounted) Notificaciones.mostrar(context, e.toString(), error: true);
+      }
+    });
+  }
+
+  Future<void> _resolverDireccion(LatLng location) async {
+    try {
+      final direccion = await _nominatim.resolverDireccion(location);
+      if (mounted) setState(() => _direccionLegible = direccion);
+    } catch (_) {
+      // La ubicación GPS sigue siendo válida aunque el servicio externo falle.
+    }
+  }
+
+  void _seleccionarDireccion(NominatimPlace lugar) {
+    setState(() {
+      _selectedLocation = lugar.location;
+      _direccionLegible = lugar.displayName;
+      _direccionController.text = lugar.displayName;
+      _sugerenciasDireccion = const [];
+    });
   }
 
   Future<void> _tomarFoto(String tipo) async {
     final XFile? image = await _picker.pickImage(
       source: ImageSource.camera,
-      preferredCameraDevice: tipo == 'selfie' ? CameraDevice.front : CameraDevice.rear,
+      preferredCameraDevice: tipo == 'selfie'
+          ? CameraDevice.front
+          : CameraDevice.rear,
       maxWidth: 1000,
       maxHeight: 1000,
     );
@@ -61,19 +109,43 @@ class _RegistroScreenState extends State<RegistroScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     if (_ciAnversoFile == null) {
-      Notificaciones.mostrar(context, 'La foto de C.I. Anverso es obligatoria', error: true);
+      Notificaciones.mostrar(
+        context,
+        'La foto de C.I. Anverso es obligatoria',
+        error: true,
+      );
       return;
     }
     if (_ciReversoFile == null) {
-      Notificaciones.mostrar(context, 'La foto de C.I. Reverso es obligatoria', error: true);
+      Notificaciones.mostrar(
+        context,
+        'La foto de C.I. Reverso es obligatoria',
+        error: true,
+      );
       return;
     }
     if (_selfieFile == null) {
-      Notificaciones.mostrar(context, 'La foto de selfie es obligatoria', error: true);
+      Notificaciones.mostrar(
+        context,
+        'La foto de selfie es obligatoria',
+        error: true,
+      );
       return;
     }
     if (_facadeFile == null) {
-      Notificaciones.mostrar(context, 'La foto de la fachada es obligatoria', error: true);
+      Notificaciones.mostrar(
+        context,
+        'La foto de la fachada es obligatoria',
+        error: true,
+      );
+      return;
+    }
+    if (!_aceptaTerminos) {
+      Notificaciones.mostrar(
+        context,
+        'Debes aceptar los términos y condiciones.',
+        error: true,
+      );
       return;
     }
 
@@ -90,13 +162,18 @@ class _RegistroScreenState extends State<RegistroScreen> {
       ciReverso: _ciReversoFile!,
       lat: _selectedLocation.latitude,
       lng: _selectedLocation.longitude,
+      termsVersion: '2026-11-26',
     );
 
     if (success && mounted) {
       Navigator.of(context).popUntil((route) => route.isFirst);
       Notificaciones.mostrar(context, '¡Registro exitoso! Bienvenido.');
     } else if (mounted) {
-      Notificaciones.mostrar(context, authProvider.errorMessage ?? 'Error en el registro', error: true);
+      Notificaciones.mostrar(
+        context,
+        authProvider.errorMessage ?? 'Error en el registro',
+        error: true,
+      );
     }
   }
 
@@ -111,12 +188,20 @@ class _RegistroScreenState extends State<RegistroScreen> {
         file != null
             ? ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: XFileImagePreview(file: file, height: 85, width: 85, fit: BoxFit.cover),
+                child: XFileImagePreview(
+                  file: file,
+                  height: 85,
+                  width: 85,
+                  fit: BoxFit.cover,
+                ),
               )
             : Container(
                 height: 85,
                 width: 85,
-                decoration: BoxDecoration(color: AppTheme.containers, borderRadius: BorderRadius.circular(8)),
+                decoration: BoxDecoration(
+                  color: AppTheme.containers,
+                  borderRadius: BorderRadius.circular(8),
+                ),
                 child: Icon(icon, size: 36, color: AppTheme.primaryButton),
               ),
         const SizedBox(height: 6),
@@ -139,7 +224,10 @@ class _RegistroScreenState extends State<RegistroScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Registro de Usuario', style: TextStyle(color: AppTheme.white)),
+        title: const Text(
+          'Registro de Usuario',
+          style: TextStyle(color: AppTheme.white),
+        ),
         backgroundColor: AppTheme.primaryButton,
         iconTheme: const IconThemeData(color: AppTheme.white),
       ),
@@ -153,21 +241,29 @@ class _RegistroScreenState extends State<RegistroScreen> {
               children: [
                 Text(
                   'Crea tu cuenta de Vecino',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(color: AppTheme.primaryButton),
+                  style: Theme.of(context).textTheme.titleLarge
+                      ?.copyWith(color: AppTheme.primaryButton),
                 ),
                 const SizedBox(height: 16),
                 CampoTexto(
                   controller: _nombreController,
                   label: 'Nombre completo',
-                  validator: (v) => Validadores.validarTextoRequerido(v, 'Nombre completo'),
-                  prefixIcon: const Icon(Icons.person, color: AppTheme.primaryButton),
+                  validator: (v) =>
+                      Validadores.validarTextoRequerido(v, 'Nombre completo'),
+                  prefixIcon: const Icon(
+                    Icons.person,
+                    color: AppTheme.primaryButton,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 CampoTexto(
                   controller: _ciController,
                   label: 'Cédula de Identidad (C.I.)',
                   validator: Validadores.validarCi,
-                  prefixIcon: const Icon(Icons.badge, color: AppTheme.primaryButton),
+                  prefixIcon: const Icon(
+                    Icons.badge,
+                    color: AppTheme.primaryButton,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 CampoTexto(
@@ -175,7 +271,10 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   label: 'Teléfono / Celular',
                   keyboardType: TextInputType.phone,
                   validator: Validadores.validarTelefono,
-                  prefixIcon: const Icon(Icons.phone, color: AppTheme.primaryButton),
+                  prefixIcon: const Icon(
+                    Icons.phone,
+                    color: AppTheme.primaryButton,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 CampoTexto(
@@ -183,7 +282,10 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   label: 'Correo electrónico',
                   keyboardType: TextInputType.emailAddress,
                   validator: Validadores.validarEmail,
-                  prefixIcon: const Icon(Icons.email, color: AppTheme.primaryButton),
+                  prefixIcon: const Icon(
+                    Icons.email,
+                    color: AppTheme.primaryButton,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 CampoContrasena(
@@ -191,9 +293,16 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   validator: Validadores.validarPassword,
                 ),
                 const SizedBox(height: 24),
-                Text('Verificación de Identidad (KYC)', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                Text(
+                  'Verificación de Identidad (KYC)',
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 4),
-                const Text('Sube C.I. Anverso, C.I. Reverso, Selfie y Fachada', style: TextStyle(color: AppTheme.grey, fontSize: 13)),
+                const Text(
+                  'Sube C.I. Anverso, C.I. Reverso, Selfie y Fachada',
+                  style: TextStyle(color: AppTheme.grey, fontSize: 13),
+                ),
                 const SizedBox(height: 12),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -239,15 +348,82 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   ],
                 ),
                 const SizedBox(height: 24),
-                Text('Ubicación de Residencia', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                Text(
+                  'Ubicación de Residencia',
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _direccionController,
+                  onChanged: _buscarDireccion,
+                  decoration: const InputDecoration(
+                    labelText: 'Buscar calle o zona',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                ),
+                if (_sugerenciasDireccion.isNotEmpty)
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 180),
+                    margin: const EdgeInsets.only(top: 4),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: AppTheme.grey.withValues(alpha: 0.35),
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _sugerenciasDireccion.length,
+                      itemBuilder: (context, index) {
+                        final lugar = _sugerenciasDireccion[index];
+                        return ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.location_on_outlined),
+                          title: Text(
+                            lugar.displayName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () => _seleccionarDireccion(lugar),
+                        );
+                      },
+                    ),
+                  ),
+                if (_direccionLegible != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _direccionLegible!,
+                    style: const TextStyle(color: AppTheme.grey, fontSize: 12),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 SelectorMapaUbicacion(
+                  key: ValueKey(
+                    '${_selectedLocation.latitude},${_selectedLocation.longitude}',
+                  ),
                   initialLocation: _selectedLocation,
                   onLocationSelected: (loc) {
                     setState(() {
                       _selectedLocation = loc;
                     });
+                    _debounceDireccion?.cancel();
+                    _debounceDireccion = Timer(
+                      const Duration(milliseconds: 650),
+                      () => _resolverDireccion(loc),
+                    );
                   },
+                ),
+                CheckboxListTile(
+                  value: _aceptaTerminos,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (value) =>
+                      setState(() => _aceptaTerminos = value ?? false),
+                  title: const Text(
+                    'Acepto los términos y condiciones de D\'BARRIO',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
                 ),
                 const SizedBox(height: 32),
                 BotonPrincipal(

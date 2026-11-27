@@ -12,13 +12,15 @@ class Pedido {
   final String estado; // 'ESPERANDO_PAGO', 'PAGO_EN_REVISION', 'EN_PREPARACION', 'LISTO', 'ENTREGADO', 'CANCELADO_POR_TIEMPO', 'EN_DISPUTA'
   final DateTime? expiraEn;
   final String? alertaPago;
+  final String? pinEntrega;
   final bool calificado;
   final DateTime? createdAt;
   final String? negocioNombre;
   final String? negocioQrUrl;
   final String? negocioStoreUrl;
   final String? compradorNombre;
-  final String? compradorSelfieUrl;
+  final String? compradorAvatarUrl;
+  final bool compradorVerificado;
   final List<DetallePedido> detalles;
 
   const Pedido({
@@ -33,21 +35,25 @@ class Pedido {
     required this.estado,
     this.expiraEn,
     this.alertaPago,
+    this.pinEntrega,
     this.calificado = false,
     this.createdAt,
     this.negocioNombre,
     this.negocioQrUrl,
     this.negocioStoreUrl,
     this.compradorNombre,
-    this.compradorSelfieUrl,
+    this.compradorAvatarUrl,
+    this.compradorVerificado = false,
     this.detalles = const [],
   });
 
   Duration get tiempoRestante {
-    if (expiraEn == null) return Duration.zero;
+    final DateTime? expiracion =
+        expiraEn ?? createdAt?.add(const Duration(minutes: 3));
+    if (expiracion == null) return Duration.zero;
     final now = DateTime.now();
-    if (expiraEn!.isBefore(now)) return Duration.zero;
-    return expiraEn!.difference(now);
+    if (expiracion.isBefore(now)) return Duration.zero;
+    return expiracion.difference(now);
   }
 
   Pedido copyWith({
@@ -62,13 +68,15 @@ class Pedido {
     String? estado,
     DateTime? expiraEn,
     String? alertaPago,
+    String? pinEntrega,
     bool? calificado,
     DateTime? createdAt,
     String? negocioNombre,
     String? negocioQrUrl,
     String? negocioStoreUrl,
     String? compradorNombre,
-    String? compradorSelfieUrl,
+    String? compradorAvatarUrl,
+    bool? compradorVerificado,
     List<DetallePedido>? detalles,
   }) {
     return Pedido(
@@ -83,13 +91,15 @@ class Pedido {
       estado: estado ?? this.estado,
       expiraEn: expiraEn ?? this.expiraEn,
       alertaPago: alertaPago ?? this.alertaPago,
+      pinEntrega: pinEntrega ?? this.pinEntrega,
       calificado: calificado ?? this.calificado,
       createdAt: createdAt ?? this.createdAt,
       negocioNombre: negocioNombre ?? this.negocioNombre,
       negocioQrUrl: negocioQrUrl ?? this.negocioQrUrl,
       negocioStoreUrl: negocioStoreUrl ?? this.negocioStoreUrl,
       compradorNombre: compradorNombre ?? this.compradorNombre,
-      compradorSelfieUrl: compradorSelfieUrl ?? this.compradorSelfieUrl,
+      compradorAvatarUrl: compradorAvatarUrl ?? this.compradorAvatarUrl,
+      compradorVerificado: compradorVerificado ?? this.compradorVerificado,
       detalles: detalles ?? this.detalles,
     );
   }
@@ -109,15 +119,30 @@ class Pedido {
       negStore = map['negocio_store_url']?.toString();
     }
 
+    Map<String, dynamic>? perfilComprador;
+    final perfilAnidado = map['perfiles'];
+    if (perfilAnidado is Map) {
+      perfilComprador = Map<String, dynamic>.from(perfilAnidado);
+    } else if (perfilAnidado is List &&
+        perfilAnidado.isNotEmpty &&
+        perfilAnidado.first is Map) {
+      perfilComprador = Map<String, dynamic>.from(perfilAnidado.first as Map);
+    }
+
     String? compNombre;
-    String? compSelfie;
-    if (map['perfiles'] is Map) {
-      final per = map['perfiles'] as Map<String, dynamic>;
-      compNombre = per['nombre']?.toString();
-      compSelfie = per['selfie_url']?.toString();
+    String? compAvatar;
+    var compVerificado = map['comprador_verificado'] == true;
+    if (perfilComprador != null) {
+      final nombre = perfilComprador['nombre']?.toString().trim();
+      compNombre = nombre == null || nombre.isEmpty ? null : nombre;
+      final avatar = perfilComprador['avatar_url']?.toString().trim();
+      compAvatar = avatar == null || avatar.isEmpty ? null : avatar;
+      compVerificado =
+          compVerificado || perfilComprador['kyc_verificado'] == true;
     } else {
-      compNombre = map['comprador_nombre']?.toString();
-      compSelfie = map['comprador_selfie_url']?.toString();
+      final nombre = map['comprador_nombre']?.toString().trim();
+      compNombre = nombre == null || nombre.isEmpty ? null : nombre;
+      compAvatar = map['comprador_avatar_url']?.toString();
     }
 
     List<DetallePedido> detallesList = [];
@@ -135,21 +160,30 @@ class Pedido {
       id: map['id']?.toString() ?? '',
       compradorId: map['comprador_id']?.toString() ?? '',
       negocioId: map['negocio_id']?.toString() ?? '',
-      modalidadEntrega: map['modalidad_entrega']?.toString() ?? map['modalidad']?.toString() ?? 'RETIRO',
+      modalidadEntrega:
+          map['modalidad_entrega']?.toString() ??
+          map['modalidad']?.toString() ??
+          'RETIRO',
       referenciaEntrega: map['referencia_entrega']?.toString(),
-      subtotal: map['subtotal'] != null ? (map['subtotal'] as num).toDouble() : 0.0,
-      costoEnvio: map['costo_envio'] != null ? (map['costo_envio'] as num).toDouble() : 0.0,
-      total: map['total'] != null ? (map['total'] as num).toDouble() : 0.0,
+      subtotal: _numeroSeguro(map['subtotal']),
+      costoEnvio: _numeroSeguro(map['costo_envio']),
+      total: _numeroSeguro(map['total']),
       estado: map['estado']?.toString() ?? 'ESPERANDO_PAGO',
-      expiraEn: map['expira_en'] != null ? DateTime.tryParse(map['expira_en'].toString()) : null,
+      expiraEn: map['expira_en'] != null
+          ? DateTime.tryParse(map['expira_en'].toString())
+          : null,
       alertaPago: map['alerta_pago']?.toString(),
+      pinEntrega: map['pin_entrega']?.toString(),
       calificado: map['calificado'] ?? false,
-      createdAt: map['created_at'] != null ? DateTime.tryParse(map['created_at'].toString()) : null,
+      createdAt: map['created_at'] != null
+          ? DateTime.tryParse(map['created_at'].toString())
+          : null,
       negocioNombre: negNombre,
       negocioQrUrl: negQr,
       negocioStoreUrl: negStore,
       compradorNombre: compNombre,
-      compradorSelfieUrl: compSelfie,
+      compradorAvatarUrl: compAvatar,
+      compradorVerificado: compVerificado,
       detalles: detallesList,
     );
   }
@@ -167,8 +201,16 @@ class Pedido {
       'estado': estado,
       'expira_en': expiraEn?.toIso8601String(),
       'alerta_pago': alertaPago,
+      'pin_entrega': pinEntrega,
       'calificado': calificado,
       'created_at': createdAt?.toIso8601String(),
     };
   }
+}
+
+double _numeroSeguro(dynamic valor) {
+  final parsed = valor is num
+      ? valor.toDouble()
+      : double.tryParse(valor?.toString().trim() ?? '');
+  return parsed != null && parsed.isFinite ? parsed : 0.0;
 }

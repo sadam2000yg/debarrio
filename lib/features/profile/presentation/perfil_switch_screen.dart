@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/ui_kit.dart';
 import '../../../services/storage_service.dart';
 import '../../auth/domain/negocio.dart';
+import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../../explorar/presentation/detalle_producto_screen.dart';
 import '../../explorar/presentation/explorar_provider.dart';
@@ -33,7 +35,10 @@ class PerfilSwitchScreen extends StatelessWidget {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Cerrar Sesión', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Cerrar Sesión',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -47,7 +52,10 @@ class PerfilSwitchScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _cambiarFotoFachada(BuildContext context, Negocio negocio) async {
+  Future<void> _cambiarFotoFachada(
+    BuildContext context,
+    Negocio negocio,
+  ) async {
     final picker = ImagePicker();
     final XFile? image = await picker.pickImage(
       source: ImageSource.gallery,
@@ -58,7 +66,11 @@ class PerfilSwitchScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     try {
-      final url = await StorageService().uploadImage(image, 'negocios_assets', 'fachadas');
+      final url = await StorageService().uploadImage(
+        image,
+        'negocios_assets',
+        'fachadas',
+      );
       if (!context.mounted) return;
 
       await Supabase.instance.client
@@ -67,19 +79,137 @@ class PerfilSwitchScreen extends StatelessWidget {
           .eq('id', negocio.id);
       if (!context.mounted) return;
 
-      await context.read<CatalogoProvider>().cargarNegocioYProductos(negocio.ownerId);
+      await context.read<CatalogoProvider>().cargarNegocioYProductos(
+        negocio.ownerId,
+      );
       if (!context.mounted) return;
 
       final auth = context.read<AuthProvider>();
       await auth.restaurarSesion();
       if (!context.mounted) return;
 
-      Notificaciones.mostrar(context, '¡Foto de fachada actualizada con éxito!');
+      Notificaciones.mostrar(
+        context,
+        '¡Foto de fachada actualizada con éxito!',
+      );
     } catch (e) {
       if (context.mounted) {
-        Notificaciones.mostrar(context, 'Error al actualizar fachada: $e', error: true);
+        Notificaciones.mostrar(
+          context,
+          'Error al actualizar fachada: $e',
+          error: true,
+        );
       }
     }
+  }
+
+  Future<void> _cambiarFotoPerfil(BuildContext context) async {
+    try {
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+      if (image == null || !context.mounted) return;
+
+      await context.read<AuthProvider>().actualizarFotoPerfilPublica(image);
+      if (!context.mounted) return;
+      Notificaciones.mostrar(context, 'Foto pública actualizada.');
+    } catch (error) {
+      if (context.mounted) {
+        Notificaciones.mostrar(
+          context,
+          'Error al actualizar la foto pública: $error',
+          error: true,
+        );
+      }
+    }
+  }
+
+  Widget _buildProfileAvatar(
+    BuildContext context,
+    UserProfile? profile, {
+    required double radius,
+  }) {
+    final avatarUrl = profile?.avatarUrl;
+    final imageUrl = avatarUrl != null && avatarUrl.isNotEmpty
+        ? avatarUrl
+        : profile?.selfieUrl ?? '';
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onTap: imageUrl.isEmpty
+              ? null
+              : () => abrirImagenExpandida(
+                  context,
+                  imageUrl,
+                  titulo: profile?.nombre ?? 'Perfil',
+                ),
+          child: CircleAvatar(
+            radius: radius + 2,
+            backgroundColor: Colors.white,
+            child: CircleAvatar(
+              radius: radius - 2,
+              backgroundColor: AppTheme.containers,
+              backgroundImage: imageUrl.isEmpty
+                  ? null
+                  : CachedNetworkImageProvider(imageUrl),
+              child: imageUrl.isEmpty
+                  ? Icon(
+                      Icons.person,
+                      size: radius,
+                      color: AppTheme.primaryButton,
+                    )
+                  : null,
+            ),
+          ),
+        ),
+        Positioned(
+          top: 0,
+          right: 0,
+          child: CircleAvatar(
+            radius: 15,
+            backgroundColor: AppTheme.primaryButton,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              iconSize: 16,
+              tooltip: 'Cambiar foto pública',
+              onPressed: profile == null
+                  ? null
+                  : () => _cambiarFotoPerfil(context),
+              icon: const Icon(
+                Icons.photo_camera_outlined,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAvatarPrivacyNote(BuildContext context, UserProfile? profile) {
+    return Column(
+      children: [
+        TextButton.icon(
+          onPressed: profile == null ? null : () => _cambiarFotoPerfil(context),
+          icon: const Icon(Icons.photo_camera_outlined, size: 18),
+          label: Text(
+            profile?.avatarPath == null
+                ? 'Agregar foto pública'
+                : 'Cambiar foto pública',
+          ),
+        ),
+        const Text(
+          'Se verá en pedidos y reseñas. Tu selfie y documentos KYC siguen privados.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppTheme.grey, fontSize: 11),
+        ),
+      ],
+    );
   }
 
   @override
@@ -99,7 +229,8 @@ class PerfilSwitchScreen extends StatelessWidget {
       });
     }
 
-    final bool kycVerificado = profile != null &&
+    final bool kycVerificado =
+        profile != null &&
         profile.ciAnversoUrl.isNotEmpty &&
         profile.ciReversoUrl.isNotEmpty;
 
@@ -121,7 +252,11 @@ class PerfilSwitchScreen extends StatelessWidget {
                   const Expanded(
                     child: Text(
                       'Modo Emprendedor',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: AppTheme.textPrimary,
+                      ),
                     ),
                   ),
                   Switch(
@@ -157,11 +292,17 @@ class PerfilSwitchScreen extends StatelessWidget {
                               fit: BoxFit.cover,
                               placeholder: (context, url) => Container(
                                 color: AppTheme.containers,
-                                child: const Center(child: CircularProgressIndicator()),
+                                child: const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
                               ),
                               errorWidget: (context, url, error) => Container(
                                 color: AppTheme.containers,
-                                child: const Icon(Icons.storefront, size: 50, color: AppTheme.primaryButton),
+                                child: const Icon(
+                                  Icons.storefront,
+                                  size: 50,
+                                  color: AppTheme.primaryButton,
+                                ),
                               ),
                             ),
                           ),
@@ -170,9 +311,15 @@ class PerfilSwitchScreen extends StatelessWidget {
                           top: 12,
                           left: 12,
                           child: CircleAvatar(
-                            backgroundColor: Colors.black.withValues(alpha: 0.6),
+                            backgroundColor: Colors.black.withValues(
+                              alpha: 0.6,
+                            ),
                             child: IconButton(
-                              icon: const Icon(Icons.open_in_full, color: Colors.white, size: 20),
+                              icon: const Icon(
+                                Icons.open_in_full,
+                                color: Colors.white,
+                                size: 20,
+                              ),
                               onPressed: () => abrirImagenExpandida(
                                 context,
                                 negocio.storePhotoUrl,
@@ -185,10 +332,17 @@ class PerfilSwitchScreen extends StatelessWidget {
                           top: 12,
                           right: 12,
                           child: CircleAvatar(
-                            backgroundColor: Colors.black.withValues(alpha: 0.6),
+                            backgroundColor: Colors.black.withValues(
+                              alpha: 0.6,
+                            ),
                             child: IconButton(
-                              icon: const Icon(Icons.edit, color: Colors.white, size: 20),
-                              onPressed: () => _cambiarFotoFachada(context, negocio),
+                              icon: const Icon(
+                                Icons.edit,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                              onPressed: () =>
+                                  _cambiarFotoFachada(context, negocio),
                             ),
                           ),
                         ),
@@ -200,41 +354,7 @@ class PerfilSwitchScreen extends StatelessWidget {
                     left: 0,
                     right: 0,
                     child: Center(
-                      child: Stack(
-                        children: [
-                          CircleAvatar(
-                            radius: 52,
-                            backgroundColor: Colors.white,
-                            child: CircleAvatar(
-                              radius: 48,
-                              backgroundColor: AppTheme.containers,
-                              backgroundImage: profile?.selfieUrl != null && profile!.selfieUrl.isNotEmpty
-                                  ? CachedNetworkImageProvider(profile.selfieUrl) as ImageProvider
-                                  : null,
-                              child: profile?.selfieUrl == null || profile!.selfieUrl.isEmpty
-                                  ? const Icon(Icons.person, size: 48, color: AppTheme.primaryButton)
-                                  : null,
-                            ),
-                          ),
-                          if (profile?.selfieUrl != null && profile!.selfieUrl.isNotEmpty)
-                            Positioned(
-                              bottom: 0,
-                              right: 0,
-                              child: GestureDetector(
-                                onTap: () => abrirImagenExpandida(
-                                  context,
-                                  profile.selfieUrl,
-                                  titulo: profile.nombre,
-                                ),
-                                child: CircleAvatar(
-                                  radius: 16,
-                                  backgroundColor: AppTheme.primaryButton,
-                                  child: const Icon(Icons.open_in_full, size: 14, color: Colors.white),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
+                      child: _buildProfileAvatar(context, profile, radius: 50),
                     ),
                   ),
                 ],
@@ -245,15 +365,24 @@ class PerfilSwitchScreen extends StatelessWidget {
                   children: [
                     Text(
                       profile?.nombre ?? 'Usuario',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                      style: Theme.of(context).textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
-                    Text(profile?.email ?? '', style: const TextStyle(color: AppTheme.grey)),
+                    Text(
+                      profile?.email ?? '',
+                      style: const TextStyle(color: AppTheme.grey),
+                    ),
                     const SizedBox(height: 4),
                     Text(
                       negocio.nombre,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primaryButton),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: AppTheme.primaryButton,
+                      ),
                     ),
+                    _buildAvatarPrivacyNote(context, profile),
                   ],
                 ),
               ),
@@ -261,44 +390,19 @@ class PerfilSwitchScreen extends StatelessWidget {
               Center(
                 child: Column(
                   children: [
-                    Stack(
-                      children: [
-                        CircleAvatar(
-                          radius: 50,
-                          backgroundColor: AppTheme.containers,
-                          backgroundImage: profile?.selfieUrl != null && profile!.selfieUrl.isNotEmpty
-                              ? CachedNetworkImageProvider(profile.selfieUrl) as ImageProvider
-                              : null,
-                          child: profile?.selfieUrl == null || profile!.selfieUrl.isEmpty
-                              ? const Icon(Icons.person, size: 50, color: AppTheme.primaryButton)
-                              : null,
-                        ),
-                        if (profile?.selfieUrl != null && profile!.selfieUrl.isNotEmpty)
-                          Positioned(
-                            bottom: 0,
-                            right: 0,
-                            child: GestureDetector(
-                              onTap: () => abrirImagenExpandida(
-                                context,
-                                profile.selfieUrl,
-                                titulo: profile.nombre,
-                              ),
-                              child: CircleAvatar(
-                                radius: 14,
-                                backgroundColor: AppTheme.primaryButton,
-                                child: const Icon(Icons.open_in_full, size: 12, color: Colors.white),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
+                    _buildProfileAvatar(context, profile, radius: 50),
                     const SizedBox(height: 12),
                     Text(
                       profile?.nombre ?? 'Usuario',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                      style: Theme.of(context).textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
-                    Text(profile?.email ?? '', style: const TextStyle(color: AppTheme.grey)),
+                    Text(
+                      profile?.email ?? '',
+                      style: const TextStyle(color: AppTheme.grey),
+                    ),
+                    _buildAvatarPrivacyNote(context, profile),
                   ],
                 ),
               ),
@@ -306,23 +410,38 @@ class PerfilSwitchScreen extends StatelessWidget {
             const SizedBox(height: 24),
             Card(
               elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Información Verificada', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primaryButton)),
+                    const Text(
+                      'Información Verificada',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: AppTheme.primaryButton,
+                      ),
+                    ),
                     const Divider(),
                     _infoRow(Icons.person, 'Nombre', profile?.nombre ?? '-'),
                     _infoRow(Icons.email, 'Email', profile?.email ?? '-'),
                     _infoRow(Icons.badge, 'C.I.', profile?.ci ?? '-'),
                     _infoRow(Icons.phone, 'Teléfono', profile?.telefono ?? '-'),
-                    _infoRow(Icons.verified_user, 'Rol Activo', authProvider.activeRole),
+                    _infoRow(
+                      Icons.verified_user,
+                      'Rol Activo',
+                      authProvider.activeRole,
+                    ),
                     _infoRow(
                       Icons.verified,
                       'Estado KYC',
-                      kycVerificado ? 'CI Anverso y Reverso Verificados ✓' : 'Pendiente de verificación',
+                      kycVerificado
+                          ? 'CI Anverso y Reverso Verificados ✓'
+                          : 'Pendiente de verificación',
                     ),
                   ],
                 ),
@@ -336,7 +455,9 @@ class PerfilSwitchScreen extends StatelessWidget {
                 onPressed: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const RegistroNegocioScreen()),
+                    MaterialPageRoute(
+                      builder: (_) => const RegistroNegocioScreen(),
+                    ),
                   );
                 },
                 icon: const Icon(Icons.store),
@@ -350,10 +471,15 @@ class PerfilSwitchScreen extends StatelessWidget {
                 foregroundColor: Colors.red,
                 side: const BorderSide(color: Colors.red),
                 padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               icon: const Icon(Icons.logout, color: Colors.red),
-              label: const Text('Cerrar Sesión', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              label: const Text(
+                'Cerrar Sesión',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
             ),
             const SizedBox(height: 16),
           ],
@@ -364,7 +490,10 @@ class PerfilSwitchScreen extends StatelessWidget {
     if (esPestana) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(isEmprendedor ? 'Panel de Emprendedor' : 'Mi Perfil - Vecino', style: const TextStyle(color: AppTheme.white)),
+          title: Text(
+            isEmprendedor ? 'Panel de Emprendedor' : 'Mi Perfil - Vecino',
+            style: const TextStyle(color: AppTheme.white),
+          ),
           backgroundColor: AppTheme.primaryButton,
           actions: [
             IconButton(
@@ -380,7 +509,10 @@ class PerfilSwitchScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isEmprendedor ? 'Panel de Emprendedor' : 'Mi Perfil - Vecino', style: const TextStyle(color: AppTheme.white)),
+        title: Text(
+          isEmprendedor ? 'Panel de Emprendedor' : 'Mi Perfil - Vecino',
+          style: const TextStyle(color: AppTheme.white),
+        ),
         backgroundColor: AppTheme.primaryButton,
         actions: [
           IconButton(
@@ -405,7 +537,11 @@ class PerfilSwitchScreen extends StatelessWidget {
           children: [
             const Text(
               'Documentos e Imágenes KYC',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primaryButton),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: AppTheme.primaryButton,
+              ),
             ),
             const Divider(),
             const SizedBox(height: 8),
@@ -419,8 +555,16 @@ class PerfilSwitchScreen extends StatelessWidget {
               children: [
                 _buildKycImageCard(context, 'Selfie', profile?.selfieUrl),
                 _buildKycImageCard(context, 'Fachada', profile?.facadeUrl),
-                _buildKycImageCard(context, 'C.I. Anverso', profile?.ciAnversoUrl),
-                _buildKycImageCard(context, 'C.I. Reverso', profile?.ciReversoUrl),
+                _buildKycImageCard(
+                  context,
+                  'C.I. Anverso',
+                  profile?.ciAnversoUrl,
+                ),
+                _buildKycImageCard(
+                  context,
+                  'C.I. Reverso',
+                  profile?.ciReversoUrl,
+                ),
               ],
             ),
           ],
@@ -450,14 +594,25 @@ class PerfilSwitchScreen extends StatelessWidget {
                         fit: BoxFit.cover,
                         width: double.infinity,
                         placeholder: (context, url) => const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryButton),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.primaryButton,
+                          ),
                         ),
                         errorWidget: (context, url, error) => const Center(
-                          child: Icon(Icons.broken_image, color: AppTheme.grey, size: 32),
+                          child: Icon(
+                            Icons.broken_image,
+                            color: AppTheme.grey,
+                            size: 32,
+                          ),
                         ),
                       )
                     : const Center(
-                        child: Icon(Icons.image_not_supported, color: AppTheme.grey, size: 32),
+                        child: Icon(
+                          Icons.image_not_supported,
+                          color: AppTheme.grey,
+                          size: 32,
+                        ),
                       ),
               ),
               Container(
@@ -467,7 +622,11 @@ class PerfilSwitchScreen extends StatelessWidget {
                 child: Text(
                   title,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],
@@ -481,7 +640,11 @@ class PerfilSwitchScreen extends StatelessWidget {
                 child: CircleAvatar(
                   radius: 14,
                   backgroundColor: Colors.black.withValues(alpha: 0.6),
-                  child: const Icon(Icons.open_in_full, size: 12, color: Colors.white),
+                  child: const Icon(
+                    Icons.open_in_full,
+                    size: 12,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
@@ -501,7 +664,10 @@ class PerfilSwitchScreen extends StatelessWidget {
             child: Text.rich(
               TextSpan(
                 children: [
-                  TextSpan(text: '$label: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  TextSpan(
+                    text: '$label: ',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   TextSpan(text: value),
                 ],
               ),

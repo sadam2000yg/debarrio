@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../auth/domain/negocio.dart';
 import '../domain/producto.dart';
 
@@ -7,16 +9,26 @@ class NegocioRepository {
 
   Future<Negocio?> obtenerNegocioPorOwner(String ownerId) async {
     try {
-      final response = await _supabase.from('negocios').select().eq('owner_id', ownerId).maybeSingle();
+      final response = await _supabase
+          .from('negocios')
+          .select()
+          .eq('owner_id', ownerId)
+          .maybeSingle();
       if (response != null) {
         return Negocio.fromMap(response);
       }
-    } catch (_) {}
+    } catch (e, st) {
+      debugPrint('Error en obtenerNegocioPorOwner: $e\n$st');
+      rethrow;
+    }
     return null;
   }
 
   Future<void> actualizarEstadoOperativo(String negocioId, bool abierto) async {
-    await _supabase.from('negocios').update({'abierto': abierto}).eq('id', negocioId);
+    await _supabase
+        .from('negocios')
+        .update({'abierto': abierto})
+        .eq('id', negocioId);
     if (!abierto) {
       await _supabase
           .from('productos')
@@ -34,19 +46,26 @@ class NegocioRepository {
     required int shippingCost,
     required String qrPhotoUrl,
     required String storePhotoUrl,
+    String? horaApertura,
+    String? horaCierre,
   }) async {
     if (deliveryOptions.isEmpty) {
       throw 'Debe seleccionar al menos una opción de entrega.';
     }
 
-    await _supabase.from('negocios').update({
-      'nombre': nombre.trim(),
-      'descripcion': descripcion.trim(),
-      'delivery_options': deliveryOptions,
-      'shipping_cost': shippingCost,
-      'qr_photo_url': qrPhotoUrl,
-      'store_photo_url': storePhotoUrl,
-    }).eq('id', negocioId);
+    await _supabase
+        .from('negocios')
+        .update({
+          'nombre': nombre.trim(),
+          'descripcion': descripcion.trim(),
+          'delivery_options': deliveryOptions,
+          'shipping_cost': shippingCost,
+          'qr_photo_url': qrPhotoUrl,
+          'store_photo_url': storePhotoUrl,
+          'hora_apertura': horaApertura,
+          'hora_cierre': horaCierre,
+        })
+        .eq('id', negocioId);
   }
 
   Future<List<Producto>> listarProductosDeNegocio(String negocioId) async {
@@ -59,8 +78,9 @@ class NegocioRepository {
           .order('nombre', ascending: true);
 
       return (response as List).map((e) => Producto.fromMap(e)).toList();
-    } catch (_) {
-      return [];
+    } catch (e, st) {
+      debugPrint('Error en listarProductosDeNegocio (NegocioRepo): $e\n$st');
+      rethrow;
     }
   }
 
@@ -68,16 +88,28 @@ class NegocioRepository {
     await _supabase.from('productos').insert(producto.toMap());
   }
 
-  Future<void> actualizarProducto(Producto producto) async {
-    await _supabase.from('productos').update(producto.toMap()).eq('id', producto.id);
+  Future<Producto> actualizarProducto(Producto producto) async {
+    final response = await _supabase
+        .from('productos')
+        .update(producto.toUpdateMap())
+        .eq('id', producto.id)
+        .select()
+        .single();
+    return Producto.fromMap(response);
   }
 
   Future<void> alternarActivoProducto(String productoId, bool activo) async {
-    await _supabase.from('productos').update({'activo': activo}).eq('id', productoId);
+    await _supabase
+        .from('productos')
+        .update({'activo': activo})
+        .eq('id', productoId);
   }
 
   Future<void> eliminarProductoLogico(String productoId) async {
-    await _supabase.from('productos').update({'eliminado': true}).eq('id', productoId);
+    await _supabase
+        .from('productos')
+        .update({'eliminado': true})
+        .eq('id', productoId);
   }
 
   Future<void> reiniciarStockDiario(String negocioId) async {
@@ -90,10 +122,10 @@ class NegocioRepository {
 
     for (final pMap in productosRes) {
       final prod = Producto.fromMap(pMap);
-      await _supabase.from('productos').update({
-        'stock_disponible': prod.stockBaseDiario,
-        'activo': true,
-      }).eq('id', prod.id);
+      await _supabase
+          .from('productos')
+          .update({'stock_disponible': prod.stockBaseDiario, 'activo': true})
+          .eq('id', prod.id);
     }
   }
 }

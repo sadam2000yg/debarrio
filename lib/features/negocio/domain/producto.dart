@@ -31,7 +31,12 @@ class Producto {
 
   String get fotoUrl => fotosUrls.isNotEmpty ? fotosUrls.first : '';
 
-  bool get estaDisponible => activo && !eliminado && !vendidoUnico && stockDisponible > 0;
+  bool get estaDisponible {
+    return activo &&
+        !eliminado &&
+        stockDisponible > 0 &&
+        (tipoInventario != 'UNICO' || !vendidoUnico);
+  }
 
   String get etiquetaDisponibilidad {
     if (eliminado) return 'Eliminado';
@@ -80,7 +85,8 @@ class Producto {
     List<String> fotos = [];
     if (map['fotos_urls'] is List) {
       fotos = (map['fotos_urls'] as List).map((e) => e.toString()).toList();
-    } else if (map['foto_url'] != null && map['foto_url'].toString().isNotEmpty) {
+    } else if (map['foto_url'] != null &&
+        map['foto_url'].toString().isNotEmpty) {
       fotos = [map['foto_url'].toString()];
     }
 
@@ -92,9 +98,15 @@ class Producto {
       fotosUrls: fotos,
       precio: map['precio'] != null ? (map['precio'] as num).toDouble() : 0.0,
       tipoInventario: map['tipo_inventario']?.toString() ?? 'RECURRENTE',
-      stockDisponible: map['stock_disponible'] != null ? (map['stock_disponible'] as num).toInt() : 0,
-      stockReservado: map['stock_reservado'] != null ? (map['stock_reservado'] as num).toInt() : 0,
-      stockBaseDiario: map['stock_base_diario'] != null ? (map['stock_base_diario'] as num).toInt() : 0,
+      stockDisponible: map['stock_disponible'] != null
+          ? (map['stock_disponible'] as num).toInt()
+          : 0,
+      stockReservado: map['stock_reservado'] != null
+          ? (map['stock_reservado'] as num).toInt()
+          : 0,
+      stockBaseDiario: map['stock_base_diario'] != null
+          ? (map['stock_base_diario'] as num).toInt()
+          : 0,
       activo: map['activo'] ?? true,
       vendidoUnico: map['vendido_unico'] ?? false,
       eliminado: map['eliminado'] ?? false,
@@ -121,5 +133,21 @@ class Producto {
       map['id'] = id;
     }
     return map;
+  }
+
+  Map<String, dynamic> toUpdateMap() {
+    return {
+      'nombre': nombre,
+      'descripcion': descripcion,
+      'fotos_urls': fotosUrls,
+      'foto_url': fotosUrls.isNotEmpty ? fotosUrls.first : '',
+      'precio': precio,
+      'tipo_inventario': tipoInventario,
+      'stock_disponible': stockDisponible,
+      'stock_base_diario': stockBaseDiario,
+      'activo': activo,
+      'vendido_unico': vendidoUnico,
+      'eliminado': eliminado,
+    };
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../auth/domain/negocio.dart';
 import '../../negocio/domain/producto.dart';
 import '../domain/item_carrito.dart';
@@ -15,14 +16,17 @@ class CarritoProvider extends ChangeNotifier {
   bool get validandoStock => _validandoStock;
   String? get error => _error;
   bool get estaVacio => _items.isEmpty;
-  int get cantidadTotalItems => _items.fold(0, (sum, item) => sum + item.cantidad);
+  int get cantidadTotalItems =>
+      _items.fold(0, (sum, item) => sum + item.cantidad);
   double get subtotalProductos {
     final total = _items.fold(0.0, (sum, item) => sum + item.subtotal);
     return double.parse(total.toStringAsFixed(2));
   }
 
   bool perteneceAOtroNegocio(String negocioId) {
-    return _negocioActual != null && _items.isNotEmpty && _negocioActual!.id != negocioId;
+    return _negocioActual != null &&
+        _items.isNotEmpty &&
+        _negocioActual!.id != negocioId;
   }
 
   String? agregarProducto({
@@ -46,16 +50,24 @@ class CarritoProvider extends ChangeNotifier {
 
     _negocioActual ??= negocio;
 
-    final int maxPermitido = producto.tipoInventario == 'UNICO' ? 1 : producto.stockDisponible;
-    final existingIndex = _items.indexWhere((item) => item.producto.id == producto.id);
-    final int cantidadActual = existingIndex != -1 ? _items[existingIndex].cantidad : 0;
+    final int maxPermitido = producto.tipoInventario == 'UNICO'
+        ? 1
+        : producto.stockDisponible;
+    final existingIndex = _items.indexWhere(
+      (item) => item.producto.id == producto.id,
+    );
+    final int cantidadActual = existingIndex != -1
+        ? _items[existingIndex].cantidad
+        : 0;
 
     if (cantidadActual + cantidad > maxPermitido) {
       return 'Stock máximo disponible: $maxPermitido';
     }
 
     if (existingIndex != -1) {
-      _items[existingIndex] = _items[existingIndex].copyWith(cantidad: cantidadActual + cantidad);
+      _items[existingIndex] = _items[existingIndex].copyWith(
+        cantidad: cantidadActual + cantidad,
+      );
     } else {
       _items.add(ItemCarrito(producto: producto, cantidad: cantidad));
     }
@@ -87,7 +99,9 @@ class CarritoProvider extends ChangeNotifier {
 
     final item = _items[index];
     final producto = item.producto;
-    final int maxPermitido = producto.tipoInventario == 'UNICO' ? 1 : producto.stockDisponible;
+    final int maxPermitido = producto.tipoInventario == 'UNICO'
+        ? 1
+        : producto.stockDisponible;
 
     if (item.cantidad + 1 > maxPermitido) {
       return 'Stock máximo disponible: $maxPermitido';
@@ -175,9 +189,14 @@ class CarritoProvider extends ChangeNotifier {
 
         final bool activo = prodRes['activo'] ?? true;
         final bool eliminado = prodRes['eliminado'] ?? false;
+        final String tipoInventario =
+            prodRes['tipo_inventario']?.toString() ?? 'RECURRENTE';
+        final bool vendidoUnico = prodRes['vendido_unico'] ?? false;
         final int stockDisponible = prodRes['stock_disponible'] ?? 0;
 
-        if (!activo || eliminado) {
+        if (!activo ||
+            eliminado ||
+            (tipoInventario == 'UNICO' && vendidoUnico)) {
           _validandoStock = false;
           notifyListeners();
           return 'El producto "${item.producto.nombre}" ya no está disponible';
@@ -186,7 +205,7 @@ class CarritoProvider extends ChangeNotifier {
         if (stockDisponible < item.cantidad) {
           _validandoStock = false;
           notifyListeners();
-          return 'El producto "${item.producto.nombre}" ha sido reservado por otro vecino o el stock es insuficiente (Disponible: $stockDisponible). Si no completa su compra en 1 minuto, volverá a estar disponible.';
+          return 'El producto "${item.producto.nombre}" ha sido reservado por otro vecino o el stock es insuficiente (Disponible: $stockDisponible). Si no completa su compra en 3 minutos, volverá a estar disponible.';
         }
       }
 

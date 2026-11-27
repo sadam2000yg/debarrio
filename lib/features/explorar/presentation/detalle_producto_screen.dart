@@ -1,8 +1,12 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/ui_kit.dart';
+import '../../auth/domain/negocio.dart';
+import '../../auth/presentation/auth_provider.dart';
 import '../../negocio/domain/producto.dart';
+import '../../pedidos/presentation/carrito_provider.dart';
 
 void abrirImagenExpandida(BuildContext context, String imageUrl, {String? titulo}) {
   showDialog(
@@ -58,11 +62,13 @@ void abrirImagenExpandida(BuildContext context, String imageUrl, {String? titulo
 class DetalleProductoScreen extends StatefulWidget {
   final Producto producto;
   final bool puedeComprar;
+  final Negocio negocio;
 
   const DetalleProductoScreen({
     super.key,
     required this.producto,
     required this.puedeComprar,
+    required this.negocio,
   });
 
   @override
@@ -71,6 +77,57 @@ class DetalleProductoScreen extends StatefulWidget {
 
 class _DetalleProductoScreenState extends State<DetalleProductoScreen> {
   int _paginaActual = 0;
+
+  void _agregarAlCarrito(BuildContext context, Producto prod, Negocio negocio) {
+    final authProvider = context.read<AuthProvider>();
+    final carrito = context.read<CarritoProvider>();
+    final usuarioId = authProvider.userProfile?.id ?? '';
+
+    final error = carrito.agregarProducto(
+      negocio: negocio,
+      producto: prod,
+      usuarioActualId: usuarioId,
+    );
+
+    if (error == 'CONFLICTO_NEGOCIO') {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Conflicto de Carrito'),
+          content: Text(
+            "Tu carrito ya tiene productos de '${carrito.negocioActual?.nombre}'. ¿Deseas vaciarlo para agregar productos de '${negocio.nombre}'?",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryButton),
+              onPressed: () {
+                Navigator.pop(ctx);
+                carrito.reemplazarCarritoYAgregar(
+                  negocio: negocio,
+                  producto: prod,
+                  usuarioActualId: usuarioId,
+                );
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Agregado al carrito')),
+                );
+              },
+              child: const Text('Vaciar y agregar', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+    } else if (error != null) {
+      Notificaciones.mostrar(context, error, error: true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Agregado al carrito')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -209,9 +266,7 @@ class _DetalleProductoScreenState extends State<DetalleProductoScreen> {
                   BotonPrincipal(
                     texto: widget.puedeComprar ? 'Añadir al Carrito' : 'No disponible para compra',
                     onPressed: widget.puedeComprar
-                        ? () {
-                            Notificaciones.mostrar(context, 'Añadido al carrito');
-                          }
+                        ? () => _agregarAlCarrito(context, producto, widget.negocio)
                         : null,
                   ),
                 ],
